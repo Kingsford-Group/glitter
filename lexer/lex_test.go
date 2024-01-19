@@ -24,6 +24,7 @@ func TestLexer(t *testing.T) {
     @set foo = "moo"
     @include a.ww 
     @include b.ww
+    @label Moose
     @not
     `
 
@@ -36,6 +37,10 @@ func TestLexer(t *testing.T) {
             return
         }
         tok := l.CurrentToken()
+        if tok == nil {
+            fmt.Println("NUL TOK")
+        }
         fmt.Printf("%s:%d:%d %s '%s'\n", tok.Pos.Filename, tok.Pos.Line, tok.Pos.Column, tok.Type, tok.Literal)
     }
 }
+

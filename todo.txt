@@ -1,0 +1,11 @@
+
+## Supported now
+
+- labels
+- @:, @#, @=, @set
+
+## TODO
+
+- [ ] comments
+- [ ] scope and variables
+- [ ] next

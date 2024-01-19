@@ -17,6 +17,10 @@ type Token struct {
     Pos scanner.Position
 }
 
+func (t *Token) DebugPrint() {
+    fmt.Printf("%s:%d:%d: %s '%s'\n", t.Pos.Filename, t.Pos.Line, t.Pos.Column, t.Type, t.Literal) 
+}
+
 // Every token has a type drawn from one of these:
 const (
     // TOK_EOF is an end of file marker.
@@ -59,6 +63,11 @@ const (
     CMD_COMMENT   string = "comment"
     CMD_COMMENT_END string = "endc"
     CMD_REF_START string  = "{"
+    CMD_REF_END   string  = "}"
+    CMD_CODENAME_START string = "<"
+
+    CMD_PREAMBLE string = "preamble"
+    CMD_POSTAMBLE string = "postamble"
     
     COMMAND_SYMS  string  = ":='<>(){}"
 )
@@ -76,12 +85,12 @@ func isCommandStr(s string) bool {
     }
 
     // single character commands
-    if len(s) == 1 && strings.ContainsRune(COMMAND_SYMS, firstRune(s)) {
+    if len(s) == 1 && strings.ContainsRune(COMMAND_SYMS, FirstRune(s)) {
         return true
     }
 
     // section commands consist of # repeated one or more times.
-    if firstRune(s) == SECTION_CHAR {
+    if FirstRune(s) == SECTION_CHAR {
         for _, c := range s {
             if c != SECTION_CHAR {
                 return false
@@ -92,8 +101,8 @@ func isCommandStr(s string) bool {
     return false
 }
 
-// firstRune reads the first UTF8 rune from the string.
-func firstRune(s string) rune {
+// FirstRune reads the first UTF8 rune from the string.
+func FirstRune(s string) rune {
     r, _ := utf8.DecodeRuneInString(s)
     return r
 }
@@ -121,7 +130,7 @@ func New(filename string, f io.Reader) *Lexer {
 		err:    nil,
         pos: scanner.Position{filename, 0,1,1},
 
-        mode: MODE_CONTENT,
+        mode: MODE_NONE,
 	}
 	l.nextRune()
 	return &l
@@ -197,6 +206,22 @@ func (l *Lexer) skipWhitespace() error {
 	return l.Err()
 }
 
+// skipWhitespaceOnLine skips whitespace up to the next non-space character or
+// the next newline, whichever is first.
+func (l *Lexer) skipWhitespaceOnLine() error {
+	first := true
+	for first || l.nextRune() {
+        if l.curRune() == NEWLINE {
+            return nil
+        }
+		if !unicode.IsSpace(l.curRune()) {
+			return l.Err()
+		}
+		first = false
+	}
+	return l.Err()
+}
+
 // readQuoteString reads the quoted string. It assumes that the current rune is
 // *not* part of the string (e.g. it is the opening ") and it will not include
 // terminating " in the returned string. On error, the string will be nonsense.
@@ -238,8 +263,14 @@ func (l *Lexer) readImplictString() (string, error) {
 // readString reads the next string, automatically determining if it's a Quote
 // string or an Implicit String. 
 func (l *Lexer) readString() (string, error) {
-    if err := l.skipWhitespace(); err != nil {
+    if err := l.skipWhitespaceOnLine(); err != nil {
         return "", err
+    }
+
+    // if there is no character until the next NEWLINE, then the string is empty
+    if l.curRune() == NEWLINE {
+        l.nextRune()
+        return "", nil
     }
 
     if l.curRune() == '"' {
@@ -323,7 +354,7 @@ func (l *Lexer) readCommand() (string, error) {
 
 // readContent reads until the next command or EOF.
 func (l *Lexer) readContent() (string, error) {
-    b := make([]rune, 0)
+    b := []rune{l.curRune()}
     
     for l.nextRune() {
         if l.curRune() == CMD_CHAR {
@@ -363,6 +394,7 @@ func (l *Lexer) newToken(t, val string) *Token {
 const (
     MODE_CONTENT = iota + 1
     MODE_SET
+    MODE_NONE
 )
 
 // NextToken returns the next token.
@@ -386,6 +418,19 @@ func (l *Lexer) NextToken() bool {
         return false
     }
 
+    // in NONE mode, only whitespace is allowed, so we eat it up
+    if l.mode == MODE_NONE {
+        // mode NONE allows only whitespace charaqcters. 
+        if !unicode.IsSpace(l.curRune()) {
+            l.lexError("non-whitespace (%c) in forbidden location", l.curRune())
+            return false
+        }
+        err := l.skipWhitespace()
+        if err != nil {
+            return false
+        }
+    }
+
     switch (l.curRune()) {
 
     // if we start a command
@@ -407,11 +452,16 @@ func (l *Lexer) NextToken() bool {
         }
 
         // switch to the mode that should follow this command.
-        l.mode = MODE_CONTENT
-        if s == CMD_SET || s == CMD_NEXT {
-            l.mode = MODE_SET
+        if l.mode == MODE_SET {
+            l.mode = MODE_NONE
         }
-
+        switch (s) {
+        case CMD_SET, CMD_NEXT: l.mode = MODE_SET
+        case CMD_NATURAL, CMD_CODE, CMD_CODENAME_START: l.mode = MODE_CONTENT
+        }
+        if FirstRune(s) == '#' {
+            l.mode = MODE_CONTENT
+        }
         // A { or label command expects an identifier next
         if s == CMD_REF_START || s == CMD_LABEL {
             ns, err := l.readIdent()
@@ -422,7 +472,7 @@ func (l *Lexer) NextToken() bool {
         // for any command that expects a string, read the string. We know that
         // length(s) > 0 because readCommand() returns an error if we end up
         // with an empty string.
-        if s == CMD_NATURAL || s == CMD_CODE || firstRune(s) == SECTION_CHAR || s == CMD_INCLUDE {
+        if s == CMD_NATURAL || s == CMD_CODE || FirstRune(s) == SECTION_CHAR || s == CMD_INCLUDE {
             ns, err := l.readString();
             l.nextToken = l.newToken(TOK_STRING, ns)
             l.nextErr = err
@@ -446,7 +496,6 @@ func (l *Lexer) NextToken() bool {
             // read a var 
             v, err := l.readIdent()
             if err != nil {
-                
                 return false
             }
             l.currentToken = l.newToken(TOK_VAR, v)
@@ -468,6 +517,7 @@ func (l *Lexer) NextToken() bool {
             if err != nil {
                 return false
             }
+
         }
     }
 
