@@ -7,7 +7,7 @@ import (
 )
 
 func TestLexer(t *testing.T) {
-    const in = `
+	const in = `
     @set
         file = foo.cc
         order = 1
@@ -28,19 +28,18 @@ func TestLexer(t *testing.T) {
     @not
     `
 
-    l := New("test.ww", strings.NewReader(in))
-    for l.NextToken() {
-        err := l.Err()
-        if err != nil {
-            fmt.Println("foo", err)
-            t.Errorf("%v", err)
-            return
-        }
-        tok := l.CurrentToken()
-        if tok == nil {
-            fmt.Println("NUL TOK")
-        }
-        fmt.Printf("%s:%d:%d %s '%s'\n", tok.Pos.Filename, tok.Pos.Line, tok.Pos.Column, tok.Type, tok.Literal)
-    }
+	l := New("test.ww", strings.NewReader(in))
+	for l.NextToken() {
+		err := l.Err()
+		if err != nil {
+			fmt.Println("foo", err)
+			t.Errorf("%v", err)
+			return
+		}
+		tok := l.CurrentToken()
+		if tok == nil {
+			fmt.Println("NUL TOK")
+		}
+		fmt.Printf("%s:%d:%d %s '%s'\n", tok.Pos.Filename, tok.Pos.Line, tok.Pos.Column, tok.Type, tok.Literal)
+	}
 }
-

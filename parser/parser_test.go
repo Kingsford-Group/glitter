@@ -1,13 +1,13 @@
 package parser
 
 import (
-    "fmt"
-    "strings"
-    "testing"
+	"fmt"
+	"strings"
+	"testing"
 )
 
 func TestParser(t *testing.T) {
-    const in = `
+	const in = `
     @set
         file = mooose.cc    
     @: "" A section without a header can be written this way.
@@ -31,13 +31,13 @@ func TestParser(t *testing.T) {
     This is a block of text!
     `
 
-    b, _, err := Parse("test.cc", strings.NewReader(in))
-    if err != nil {
-        fmt.Println(err)
-    }
-    if b == nil {
-        fmt.Println("NIL b")
-    } else {
-        debugPrintList(b)
-    }
+	b, _, err := Parse("test.cc", strings.NewReader(in))
+	if err != nil {
+		fmt.Println(err)
+	}
+	if b == nil {
+		fmt.Println("NIL b")
+	} else {
+		debugPrintList(b)
+	}
 }
