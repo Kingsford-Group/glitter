@@ -18,7 +18,7 @@ type Block struct {
 	Prev *Block
 	Next *Block
 
-	token *lexer.Token
+	Token *lexer.Token
 }
 
 // debugPrint is used to print out the value of a block for debugging.
@@ -31,7 +31,7 @@ func (b *Block) debugPrint() {
 func NewBlock(t string, tok *lexer.Token) *Block {
 	return &Block{
 		Type:  t,
-		token: tok,
+		Token: tok,
 	}
 }
 
@@ -45,8 +45,8 @@ func (b *Block) addLabel(s string) {
 	b.Labels = append(b.Labels, s)
 }
 
-// appendContent appends s to the content block, separated by a space.
-func (b *Block) appendContent(s string) {
+// AppendContent appends s to the content block, separated by a space.
+func (b *Block) AppendContent(s string) {
 	b.Content = b.Content + " " + s
 }
 
@@ -90,9 +90,9 @@ func findEnd(p *Block) *Block {
 	return p
 }
 
-// deleteBlock removes the node from the list. It returns the new start in case
+// DeleteBlock removes the node from the list. It returns the new start in case
 // we're removing the first node.
-func deleteBlock(start, p *Block) *Block {
+func DeleteBlock(start, p *Block) *Block {
 	if p.Prev != nil {
 		p.Prev.Next = p.Next
 	} else {
@@ -104,8 +104,8 @@ func deleteBlock(start, p *Block) *Block {
 	return start
 }
 
-// parserError creates and returns a formated error message.
-func parserError(tok *lexer.Token, msg string, vargs ...any) error {
+// Error creates and returns a formated error message.
+func Errorf(tok *lexer.Token, msg string, vargs ...any) error {
 	var pstr string
 	if tok != nil {
 		pstr = fmt.Sprintf("%s:%d:%d:", tok.Pos.Filename, tok.Pos.Line, tok.Pos.Column)
@@ -151,7 +151,7 @@ func buildList(lex *lexer.Lexer) (front *Block, end *Block, err error) {
 		// arguments are added to the active action block
 		case lexer.TOK_IDENT, lexer.TOK_STRING:
 			if end == nil {
-				err = parserError(tok, "argument without command!")
+				err = Errorf(tok, "argument without command!")
 				return
 			} else {
 				end.addArgument(tok.Literal)
@@ -164,7 +164,7 @@ func buildList(lex *lexer.Lexer) (front *Block, end *Block, err error) {
 				end = appendBlock(end, NewBlock(tok.Type, tok))
 			}
 			// add the content to the node
-			end.appendContent(tok.Literal)
+			end.AppendContent(tok.Literal)
 		}
 
 		if front == nil {
@@ -243,10 +243,10 @@ func assignLabels(start *Block) (*Block, error) {
 			// if we couldn't assign the label to a block, we stop with a
 			// parser error.
 			if !assigned {
-				return nil, parserError(p.token, "couldn't find block for label `%s`", p.Arguments[0])
+				return nil, Errorf(p.Token, "couldn't find block for label `%s`", p.Arguments[0])
 			}
 
-			start = deleteBlock(start, p)
+			start = DeleteBlock(start, p)
 		}
 
 		p = p.Next
@@ -259,8 +259,8 @@ func mergeContent(start *Block) *Block {
 	p := start
 	for p != nil {
 		if isContentBlock(p) && isContentBlock(p.Prev) {
-			p.Prev.appendContent(p.Content)
-			start = deleteBlock(start, p)
+			p.Prev.AppendContent(p.Content)
+			start = DeleteBlock(start, p)
 		}
 
 		p = p.Next
@@ -291,7 +291,7 @@ func smoothVariableRefs(start *Block) (*Block, error) {
 				// if we're at an empty content node
 				if q.Type == lexer.TOK_CONTENT && strings.TrimSpace(q.Content) == "" {
 					// delete it
-					start = deleteBlock(start, q)
+					start = DeleteBlock(start, q)
 					q = q.Next
 				} else {
 					// otherwise, we've found the end of the run
@@ -302,10 +302,10 @@ func smoothVariableRefs(start *Block) (*Block, error) {
 			// we ended up at a @} command: delete that command
 			if q != nil && q.Type == lexer.CMD_REF_END {
 				p = q.Next
-				start = deleteBlock(start, q)
+				start = DeleteBlock(start, q)
 			} else {
 				// we didn't end at a @}, so this is an error
-				return nil, parserError(p.token, "unterminated variable reference")
+				return nil, Errorf(p.Token, "unterminated variable reference")
 			}
 		} else {
 			p = p.Next
