@@ -65,6 +65,10 @@ const (
 	CMD_REF_START      string = "{"
 	CMD_REF_END        string = "}"
 	CMD_CODENAME_START string = "<"
+    CMD_CODENAME_END   string = ">"
+    CMD_INLINE_START   string = "("
+    CMD_INLINE_END     string = ")"
+    CMD_SECTION        string = "#"
 
 	CMD_PREAMBLE  string = "preamble"
 	CMD_POSTAMBLE string = "postamble"
@@ -464,7 +468,7 @@ func (l *Lexer) NextToken() bool {
 		case CMD_NATURAL, CMD_CODE, CMD_CODENAME_START:
 			l.mode = MODE_CONTENT
 		}
-		if FirstRune(s) == '#' {
+		if FirstRune(s) == SECTION_CHAR {
 			l.mode = MODE_CONTENT
 		}
 		// A { or label command expects an identifier next

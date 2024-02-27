@@ -21,8 +21,8 @@ type Block struct {
 	Token *lexer.Token
 }
 
-// debugPrint is used to print out the value of a block for debugging.
-func (b *Block) debugPrint() {
+// DebugPrint is used to print out the value of a block for debugging.
+func (b *Block) DebugPrint() {
 	args := strings.Join(b.Arguments, " ")
 	fmt.Printf("BLOCK: %s %s\n%s\n", b.Type, args, b.Content)
 }
@@ -61,10 +61,7 @@ func supportsLabel(b *Block) bool {
 		return false
 	}
 	switch b.Type {
-	case lexer.CMD_NATURAL:
-		return true
-	}
-	if lexer.FirstRune(b.Type) == lexer.SECTION_CHAR {
+	case lexer.CMD_NATURAL, lexer.CMD_SECTION:
 		return true
 	}
 	return false
@@ -117,7 +114,7 @@ func Errorf(tok *lexer.Token, msg string, vargs ...any) error {
 // debugPrintList prints out all the blocks on the list starting at front.
 func debugPrintList(front *Block) {
 	for front != nil {
-		front.debugPrint()
+		front.DebugPrint()
 		front = front.Next
 	}
 }
@@ -136,7 +133,11 @@ func buildList(lex *lexer.Lexer) (front *Block, end *Block, err error) {
 		// @ and var tokens are action blocks. For @ commands, we create a block.
 		case lexer.TOK_COMMAND:
 			// we filter out set commands, which we don't need now
-			if tok.Literal != lexer.CMD_SET {
+            if lexer.FirstRune(tok.Literal) == lexer.SECTION_CHAR {
+                b := NewBlock(lexer.CMD_SECTION, tok)
+                b.addArgument(tok.Literal)
+                end = appendBlock(end, b)
+            } else if tok.Literal != lexer.CMD_SET {
 				end = appendBlock(end, NewBlock(tok.Literal, tok))
 			}
 

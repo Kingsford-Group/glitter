@@ -9,3 +9,14 @@
 - [ ] comments
 - [ ] scope and variables
 - [ ] next
+
+`
+\begin{naturalblock}{Header}
+Header Content
+\end{naturalblock}
+
+\begin{codeblock}{name}
+    
+\end{codeblock}
+`
+

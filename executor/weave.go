@@ -2,12 +2,15 @@ package executor
 
 import (
     "io"
-    "fmt"
 
 	"monogrammedchalk.com/glitter/lexer"
 	"monogrammedchalk.com/glitter/parser"
 )
 
+// Weave is the main interface that parses a list of blocks and writes out
+// natural language explaination to the given out stream. This function does
+// some preprocessing, and then calls `weave` (internal version) to do the real
+// work.
 func Weave(front *parser.Block, out io.Writer) error {
     front, err := replaceVariables(front)
     if err != nil {
@@ -19,93 +22,89 @@ func Weave(front *parser.Block, out io.Writer) error {
         return err
     }
 
-    // for every block, execute it
-    return nil
+    return weave(front, out)
 }
 
-type Stack []map[string]string
-
-func newVarStack() Stack {
-    var s Stack
-    return pushStackFrame(s)
-}
-
-func pushStackFrame(stack Stack) Stack {
-    return append(stack, make(map[string]string))
-}
-
-func popStackFrame(stack Stack) (Stack, error) {
-    if len(stack) == 0 {
-        return stack, fmt.Errorf("unexpected end of scope")
-    }
-    return stack[:len(stack)-1], nil
-}
-
-func defineVariable(stack Stack, name, value string) error {
-    if len(stack) == 0 {
-        return fmt.Errorf("variable defined outside of any scope")
-    }
-    stack[len(stack)-1][name] = value
-    return nil
-}
-
-func varValue(stack Stack, name string) (string, error) {
-    if len(stack) == 0 {
-        return "", fmt.Errorf("unknown variable `%s`", name)
-    }
-    for i := len(stack)-1; i > 0; i-- {
-        if val, ok := stack[i][name]; ok {
-            return val, nil
-        }
-    }
-    return "", fmt.Errorf("unknown variable `%s`", name)
-}
-
-func replaceVariables(front *parser.Block) (*parser.Block, error) {
-    var err error
+// weave executes the list of commands and writes the result to the given
+// stream.
+func weave(front *parser.Block, out io.Writer) error {
     stack := newVarStack()
     p := front
     for p != nil {
-        switch p.Type {
-        case lexer.CMD_SCOPE_START:
-            stack = pushStackFrame(stack)
+        p.DebugPrint()
+        // if this is not handled by the scopes (@scope, @ends, VAR)
+        if stack, handled, err := handleScopes(stack, p); !handled {
+            switch p.Type {
 
-        case lexer.CMD_SCOPE_END:
-            stack, err = popStackFrame(stack)
-            if err != nil {
-                return nil, parser.Errorf(p.Token, "%v", err)
+            case lexer.CMD_NATURAL: // :
+                p, err = weaveNatural(p, stack)
+                if err != nil {
+                    return err
+                }
+
+            case lexer.CMD_CODE: // =
+                p, err = weaveCode(p, stack)
+                if err != nil {
+                    return err
+                }
+
+            case lexer.CMD_PREAMBLE, lexer.CMD_POSTAMBLE:
+                p, err = weaveAmble(p)
+                if err != nil {
+                    return err
+                }
+
+            case lexer.CMD_SECTION:
+                p, err = weaveSection(p)
+                if err != nil {
+                    return err
+                }
+
+            // we don't yet support include
+            case lexer.CMD_INCLUDE:
+                return notYetImplemented(p)
+
+            // these commands should be handled by one of the handlers above.
+            case lexer.CMD_CODENAME_START, lexer.CMD_CODENAME_END,
+            lexer.CMD_INLINE_START, lexer.CMD_INLINE_END, lexer.TOK_CONTENT:
+
+                return misplacedCommandError(p)
             }
 
-        case lexer.TOK_VAR:
-            err := defineVariable(stack, p.Arguments[0], p.Arguments[1])
-            if err != nil {
-                return nil, parser.Errorf(p.Token, "%v", err)
-            }
-
-        // if this is a reference to a variable, look up the variable, and
-        // replace this block with a content block that contains that value.
-        case lexer.CMD_REF_START:
-            // look up the variable value
-            varname := p.Arguments[0]
-            val, err := varValue(stack, varname)
-            if err != nil {
-                return nil, parser.Errorf(p.Token, "%v", err)
-            }
-
-            // create the new content node
-            b := parser.NewBlock(lexer.TOK_CONTENT, p.Token)
-            b.Content = val
-
-            // splice it in
-            b.Next = p.Next
-            b.Prev = p.Prev
-            if p.Prev == nil {
-                front = b
-            }
+        } else if err != nil {
+            return err
+        } else {
+            p = p.Next
         }
-        p = p.Next
     }
-    return front, nil
+    return nil
+}
+
+// notYetImplemented returns an error saying that the feature is NYI.
+func notYetImplemented(p *parser.Block) error {
+    return parser.Errorf(p.Token, "not yet implemented: %s", p.Type)
+}
+
+// misplacedCommandError returns an error saying that we shouldn't have seen
+// this command.
+func misplacedCommandError(p *parser.Block) error {
+    return parser.Errorf(p.Token, "parser error: command out of place %s", p.Type)
+}
+
+func weaveSection(p *parser.Block) (*parser.Block, error) {
+    return nil, nil
+}
+
+func weaveNatural(p *parser.Block, stack Stack) (*parser.Block, error) {
+    return nil, nil
+}
+
+func weaveCode(p *parser.Block, stack Stack) (*parser.Block, error) {
+    return nil, nil
+}
+
+func weaveAmble(p *parser.Block) (*parser.Block, error) {
+    return nil, nil
 }
 
 // moveAmbles processes all the @preamble and @postamble commands and their
