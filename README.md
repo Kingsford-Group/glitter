@@ -1,3 +1,11 @@
+# Glitter
+
+Glitter is an implementation of literate programming system for the `Go` programming language. It supports taking a Glitter file (syntax defined below) and turning it into multiple `.go` files to compile or a single `.tex` file to typeset.
+
+In fact, the system doesn’t really know anything about Go or TeX, but has been designed to work well with those systems. And out of the box (currently) the defaults all assume Go+TeX.
+
+**This software is in development and not complete or ready to be used.**
+
 # Glitter Syntax
 
 ## Blocks
@@ -146,22 +154,6 @@ Weaving makes some straightforward substitutions:
 ... << moose >> ... ->
 \glitterCodeRef{moose}
 ```
-
-## Notes:
-
-
-
-Issue: when walking a directory, need to know which files are supposed to be processed as a top-level file
-
-Solutions:
-
-* read the files, find the includes
-* use a different suffix like .gwi
-* label files with `@include_only` to skip reading unless the depth is > 1
-* label files with `@glitter tags=…. ver=0.1`
-* `@tangle`
-* `@glitter tangle`
-* a makefile like file
 
 
 
