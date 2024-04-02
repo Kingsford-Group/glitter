@@ -589,7 +589,7 @@ func getTopLevelBlocks(blocks map[string][]string) (out []string, err error) {
 
 // expandAndWriteBlock expands all << >> refs in a code block and writes the
 // block to the given stream.
-func expandAndWriteBlock(b []string, out *bufio.Writer) error {
+func expandAndWriteBlock(b []string, blocks map[string][]string, out *bufio.Writer) error {
     // TODO: write me!
     for _, line := range b {
         pos := codeRefRegex.FindStringSubmatchIndex(line)
@@ -659,7 +659,7 @@ func Tangle(filenames []string) error {
             curBuff = bufio.NewWriter(curOut)
             currentFilename = f
         }
-        err = expandAndWriteBlock(blocks[b], curBuff)
+        err = expandAndWriteBlock(blocks[b], blocks, curBuff)
         if err != nil {
             return err
         }
