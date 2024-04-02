@@ -554,6 +554,7 @@ func tangleReadBlocks(filenames []string) (map[string][]string, error) {
 	return blocks, err
 }
 
+// getTopLevelBlocks returns a list of the names of all the top-level blocks.
 func getTopLevelBlocks(blocks map[string][]string) (out []string, err error) {
     out = make([]string, 0)
     for k := range blocks {
@@ -588,8 +589,18 @@ func getTopLevelBlocks(blocks map[string][]string) (out []string, err error) {
 
 // expandAndWriteBlock expands all << >> refs in a code block and writes the
 // block to the given stream.
-func expandAndWriteBlock(b []string, out io.Writer) error {
+func expandAndWriteBlock(b []string, out *bufio.Writer) error {
     // TODO: write me!
+    for _, line := range b {
+        pos := codeRefRegex.FindStringSubmatchIndex(line)
+        if pos == nil {
+            out.WriteString(line)
+            out.WriteString("\n")
+        } else {
+            blockName := strings.TrimSpace(line[pos[2]:pos[3]])
+            fmt.Println("blockName=", blockName)
+        }
+    }
     return nil
 
 }
@@ -615,8 +626,12 @@ func Tangle(filenames []string) error {
 
     currentFilename := ""
     var curOut *os.File
+    var curBuff *bufio.Writer
     // need this func() indirection so the current version of curOut is closed
     defer func () {
+        if curBuff != nil {
+            curBuff.Flush()
+        }
         if curOut != nil {
             curOut.Close()
         }
@@ -631,6 +646,9 @@ func Tangle(filenames []string) error {
 
         // if we are starting a new file, create the new output file
         if f != currentFilename {
+            if curBuff != nil {
+                curBuff.Flush()
+            }
             if curOut != nil {
                 curOut.Close()
             }
@@ -638,9 +656,10 @@ func Tangle(filenames []string) error {
             if err != nil {
                 return err
             }
+            curBuff = bufio.NewWriter(curOut)
             currentFilename = f
         }
-        err = expandAndWriteBlock(blocks[b], curOut)
+        err = expandAndWriteBlock(blocks[b], curBuff)
         if err != nil {
             return err
         }
