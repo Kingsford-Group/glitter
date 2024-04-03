@@ -1,8 +1,8 @@
 # Glitter
 
-Glitter is an implementation of literate programming system for the `Go` programming language. It supports taking a Glitter file (syntax defined below) and turning it into multiple `.go` files to compile or a single `.tex` file to typeset.
+Glitter is an implementation of literate programming system for the `Go` programming language. It supports taking one or more Glitter file (syntax defined below) and turning it into multiple `.go` files to compile or a single `.tex` file to typeset.
 
-In fact, the system doesn’t really know anything about Go or TeX, but has been designed to work well with those systems. And out of the box (currently) the defaults all assume Go+TeX.
+In fact, the system doesn’t really know anything sophisticated about Go or TeX, but has been designed to work well with those systems. And out of the box (currently) the defaults all assume Go+TeX.
 
 **This software is in development and not complete or ready to be used.**
 
@@ -162,7 +162,10 @@ Whitespace at the start of each line in a code block is removed in such a way to
 
 Comments of the form `%line N “file”` are included whenever the file switches.
 
+# Roadmap
 
+This is a work in progress. Commits may not compile, and currently it is certainly not usable. Currently, both tangle and weave work, though are not tested in any systematic way.
 
-
-
+1. Finish implementation of tangle
+2. Options to handle some go-specific things (like automatic insertion of `package` statements)
+3. Add configuration files to tweak generation of typeset and code flies.

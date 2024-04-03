@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
     "cmp"
+    "container/list"
 	"flag"
 	"fmt"
 	"io"
@@ -79,6 +80,7 @@ var spaceRegexp = regexp.MustCompile(`\s+`)
 var topLevelRegex = regexp.MustCompile(`^\*\s*(".*")?\s*(\d+)?\s*$`)
 var topLevelStart = regexp.MustCompile(`^\s*\*`)
 var glitterRegex = regexp.MustCompile(`^\s*@glitter(\s.*)?$`)
+var emptyLineRegex = regexp.MustCompile(`^\s*$`)
 
 // codeRefRegex matches a reference to a code block. The +? operator means
 // match more than one, prefer fewer. This is neded because we may have more
@@ -124,6 +126,10 @@ func (s *StringSet) Contains(i string) bool {
 	_, ok := s.items[i]
 	return ok
 }
+
+//=================================================================================
+// GlitterScanner -- read a collection of Glitter files
+//=================================================================================
 
 // GlitterScanner enables recursively scanning through glitter source files,
 // handling @include commands as needed.
@@ -274,6 +280,10 @@ func computeLineType(line string) (LineType, string) {
 	}
 }
 
+//=================================================================================
+// Weaving - produce a file to typeset
+//=================================================================================
+
 // These constants represent the state of the parser.
 const (
 	Start int = iota
@@ -371,6 +381,10 @@ func Weave(filenames []string, out io.Writer) error {
 	return err
 }
 
+//=================================================================================
+// Tangling - write source files
+//=================================================================================
+
 // canonicalCodeName converts name to a canonical form, which removes leading
 // and trailiing spaces, replaces runs of whitespace with a single space, and,
 // if the name does not start with *, it will be all lowercased.
@@ -416,15 +430,6 @@ func parseTopLevelName(name, defaultFile string) (filename string, order int, ok
 	return
 }
 
-// trimQuotes removes leading and trailing whitespace and a single " from the
-// start and end of the string (if they exist)
-func trimQuotes(s string) string {
-    s = strings.TrimSpace(s)
-    s, _ = strings.CutPrefix(s, `"`)
-    s, _ = strings.CutSuffix(s, `"`)
-    return s
-}
-
 // splitTopLevelName splits a well-formed, complete top-level name into its
 // components.
 func splitTopLevelName(name string) (string, int, error) {
@@ -440,24 +445,79 @@ func splitTopLevelName(name string) (string, int, error) {
     return trimQuotes(subs[1]), n, nil
 }
 
-// Info prints the message if the verbosity level is level or greater.
-func Info(level int, msg string, args ...any) {
-	if Options.Verbose >= level {
-		log.Printf(msg+"\n", args...)
-	}
+// trimQuotes removes leading and trailing whitespace and a single " from the
+// start and end of the string (if they exist)
+func trimQuotes(s string) string {
+    s = strings.TrimSpace(s)
+    s, _ = strings.CutPrefix(s, `"`)
+    s, _ = strings.CutSuffix(s, `"`)
+    return s
 }
 
-// InfoWithFile prints the message, preceeded by the file and line number, if
-// the verbosity level is level or greater.
-func InfoWithFile(level int, pos *FilePos, msg string, args ...any) {
-	if Options.Verbose >= level {
-		log.Printf(fmt.Sprintf("%s:%d: %s\n", pos.filename, pos.lineno, msg), args...)
-	}
+// removeBlankLines removes blank lines from the start and end of the block
+func removeBlankLines(block []string) []string {
+    var first, last int
+    for first = range block {
+        if !emptyLineRegex.MatchString(block[first]) {
+            break
+        }
+    }
+    for last = len(block)-1; last >= 0; last-- {
+        if !emptyLineRegex.MatchString(block[last]) {
+            break
+        }
+    }
+    return block[first:last+1]
 }
 
-// ErrorWithFile returns a new error that includes the file position.
-func ErrorWithFile(pos *FilePos, msg string, args ...any) error {
-	return fmt.Errorf(fmt.Sprintf("%s:%d: %s", pos.filename, pos.lineno, msg), args...)
+// whiteSpacePrefixLength returns the number of whitespace runes that prefix
+// the string.
+func whitespacePrefixLength(line string) int {
+	for i, c := range line {
+		if !unicode.IsSpace(c) {
+			return i
+		}
+	}
+	return utf8.RuneCountInString(line)
+}
+
+// deindentBlock finds the leftmost start point of a line removes whitespace
+// before that point.
+func deindentBlock(block []string) []string {
+	minSpace := -1
+	for _, line := range block {
+		if len(strings.TrimSpace(line)) == 0 {
+			continue
+		}
+		if minSpace < 0 {
+			minSpace = len(line)
+		}
+		minSpace = min(minSpace, whitespacePrefixLength(line))
+	}
+	if minSpace < 0 {
+		return block
+	}
+	out := make([]string, len(block))
+	for i, line := range block {
+		rl := []rune(line)
+		if len(rl) < minSpace {
+			out[i] = line
+		} else {
+			out[i] = string([]rune(line)[minSpace:])
+		}
+	}
+	return out
+}
+
+// debugPrintBlocks writes all the blocks out in a simple format.
+func debugPrintBlocks(blocks map[string][]string, out io.Writer) {
+	for n, c := range blocks {
+		fmt.Fprintf(out, "<<%s>>= {\n", n)
+		for _, ll := range c {
+			fmt.Fprintf(out, "\t%s\n", ll)
+		}
+		fmt.Fprintln(out, "}")
+	}
 }
 
 // createOutputFilename returns a string with the output filename for the given
@@ -479,7 +539,7 @@ func tangleReadBlocks(filenames []string) (map[string][]string, error) {
 
 	finalizeBlock := func() {
 		if currentBlock != nil {
-			blocks[codeName] = currentBlock
+			blocks[codeName] = removeBlankLines(deindentBlock(currentBlock))
 			codeName = ""
 			currentBlock = nil
 		}
@@ -489,6 +549,7 @@ func tangleReadBlocks(filenames []string) (map[string][]string, error) {
 	currentFilename := ""
 	defaultFilename := ""
 
+    // TODO: test and correct default filename handling for includes and toplevel files.
 	scanner := NewGlitterScanner(filenames)
 	for l := range scanner.Lines() {
 		// if we're reading a top-level file, make sure the default filename
@@ -518,9 +579,8 @@ func tangleReadBlocks(filenames []string) (map[string][]string, error) {
 					)
 				}
 				// if the filename is empty or a single ., then switch back to
-				// the main output file. Note that filepath.Clean converts an
-				// empty filename to a single ., so we only have to check that.
-				if filename == "." {
+				// the main output file. 
+				if len(filename) == 0 || filename == "." {
 					filename = defaultFilename
 				}
 				currentFilename = filename
@@ -587,22 +647,81 @@ func getTopLevelBlocks(blocks map[string][]string) (out []string, err error) {
     return
 }
 
+// TODO: add //line N "file" comments to the output of tangle
+
+// expandLine will recursively substitute << >> references, trying to maintain
+// correct line breaks and indentation.
+func expandLine(blocks map[string][]string, line string) (*list.List, error) {
+    out := list.New()
+    pos := codeRefRegex.FindStringSubmatchIndex(line)
+    // if there are no substitutions to be made, the line is all we have
+    if pos == nil {
+        out.PushBack(line)
+        return out, nil
+    }
+
+    startRef := pos[0]
+    endRef := pos[1]
+    blockName := canonicalCodeName(strings.TrimSpace(line[pos[2]:pos[3]]))
+
+    if isTopLevelName(blockName) {
+        return nil, fmt.Errorf("cannot reference top-level block")
+    }
+
+    before := line[:startRef]
+    after := line[endRef:]
+    indent := utf8.RuneCountInString(before)
+
+    refdBlock, ok := blocks[blockName]
+    if !ok {
+        //TODO: be able to report the file pos
+        return nil, fmt.Errorf("unknown block reference `%s`", blockName)
+    }
+
+    // if the referenced block is empty, it becomes a single space
+    if (len(refdBlock) == 0) {
+        out.PushBack(before + " " + after)
+    } else {
+        // otherwise, we turn it into this:
+        // BEFORE<<------>>AFTER
+        // beforeLINE1
+        //       LINE2
+        //       LINE3
+        //       LINEnafter
+        for i, refline := range refdBlock {
+            if i == 0 {
+                refline = before + refline
+            } 
+            if i == len(refdBlock)-1 {
+                refline = refline + after
+            }
+            if i != 0 {
+                refline = strings.Repeat(" ", indent) + refline
+            }
+            sublist, err := expandLine(blocks, refline)
+            if err != nil {
+                return nil, err
+            }
+            out.PushBackList(sublist)
+        }
+    }
+    return out, nil
+}
+
 // expandAndWriteBlock expands all << >> refs in a code block and writes the
 // block to the given stream.
 func expandAndWriteBlock(b []string, blocks map[string][]string, out *bufio.Writer) error {
-    // TODO: write me!
     for _, line := range b {
-        pos := codeRefRegex.FindStringSubmatchIndex(line)
-        if pos == nil {
-            out.WriteString(line)
+        newLine, err := expandLine(blocks, line) 
+        if err != nil {
+            return err
+        }
+        for e := newLine.Front(); e != nil; e = e.Next() {
+            out.WriteString(replaceEscapes(e.Value.(string)))
             out.WriteString("\n")
-        } else {
-            blockName := strings.TrimSpace(line[pos[2]:pos[3]])
-            fmt.Println("blockName=", blockName)
         }
     }
     return nil
-
 }
 
 // Tangle produces a set of source code files that can be compiled into the
@@ -621,43 +740,44 @@ func Tangle(filenames []string) error {
     if len(topBlocks) == 0 {
         return fmt.Errorf("no top-level code blocks found")
     }
-
     Info(2, "%d total top-level blocks found", len(topBlocks))
 
-    currentFilename := ""
     var curOut *os.File
     var curBuff *bufio.Writer
-    // need this func() indirection so the current version of curOut is closed
-    defer func () {
+
+    closeFile := func () {
         if curBuff != nil {
             curBuff.Flush()
         }
         if curOut != nil {
             curOut.Close()
         }
-    }()
+    }
+    defer closeFile()
+
+    currentFilename := ""
 
     // go through each top level block
     for _, b := range topBlocks {
-        f, _, err := splitTopLevelName(b)
+        f, o, err := splitTopLevelName(b)
         if err != nil {
             return err
         }
 
         // if we are starting a new file, create the new output file
         if f != currentFilename {
-            if curBuff != nil {
-                curBuff.Flush()
-            }
-            if curOut != nil {
-                curOut.Close()
-            }
+            closeFile()
             curOut, err = os.Create(f)
             if err != nil {
                 return err
             }
             curBuff = bufio.NewWriter(curOut)
             currentFilename = f
+            Info(1, "Writing to `%s` (order %d)", currentFilename, o)
+        } else {
+            // writing a new block to the same file, separate with a blank
+            // line.
+            curBuff.WriteString("\n")
         }
         err = expandAndWriteBlock(blocks[b], blocks, curBuff)
         if err != nil {
@@ -665,60 +785,12 @@ func Tangle(filenames []string) error {
         }
     }
 
-	// DEBUG: the para below is just for debugging
-	debugPrintBlocks(blocks, os.Stderr)
 	return err
 }
 
-// whiteSpacePrefixLength returns the number of whitespace runes that prefix
-// the string.
-func whitespacePrefixLength(line string) int {
-	for i, c := range line {
-		if !unicode.IsSpace(c) {
-			return i
-		}
-	}
-	return utf8.RuneCountInString(line)
-}
-
-// deindentBlock finds the leftmost start point of a line removes whitespace
-// before that point.
-func deindentBlock(block []string) []string {
-	minSpace := -1
-	for _, line := range block {
-		if len(strings.TrimSpace(line)) == 0 {
-			continue
-		}
-		if minSpace < 0 {
-			minSpace = len(line)
-		}
-		minSpace = min(minSpace, whitespacePrefixLength(line))
-	}
-	if minSpace < 0 {
-		return block
-	}
-	out := make([]string, len(block))
-	for i, line := range block {
-		rl := []rune(line)
-		if len(rl) < minSpace {
-			out[i] = line
-		} else {
-			out[i] = string([]rune(line)[minSpace:])
-		}
-	}
-	return out
-}
-
-// debugPrintBlocks writes all the blocks out in a simple format.
-func debugPrintBlocks(blocks map[string][]string, out io.Writer) {
-	for n, c := range blocks {
-		fmt.Fprintf(out, "<<%s>>= {\n", n)
-		for _, ll := range deindentBlock(c) {
-			fmt.Fprintf(out, "\t%s\n", ll)
-		}
-		fmt.Fprintln(out, "}")
-	}
-}
+//=================================================================================
+// File search (for tangle)
+//=================================================================================
 
 // hasGlitterProp returns true if the first non-empty line in the given file is
 // a @glitter line that contains the word given by property. If there is any
@@ -766,17 +838,18 @@ func findTopFiles(filename string) ([]string, error) {
 	}
 	out := make([]string, 0)
 	if stat.IsDir() {
-		err := filepath.WalkDir(filename, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if !d.IsDir() && filepath.Ext(d.Name()) == GLITTER_EXT {
-				if hasGlitterProp(d.Name(), "top") {
-					out = append(out, path)
-				}
-			}
-			return nil
-		})
+		err := filepath.WalkDir(filename, 
+            func(path string, d fs.DirEntry, err error) error {
+                if err != nil {
+                    return err
+                }
+                if !d.IsDir() && filepath.Ext(d.Name()) == GLITTER_EXT {
+                    if hasGlitterProp(d.Name(), "top") {
+                        out = append(out, path)
+                    }
+                }
+                return nil
+            })
 		if err != nil {
 			return nil, err
 		}
@@ -799,8 +872,31 @@ func findTangleFiles(filenames []string) ([]string, error) {
 		out = append(out, list...)
 	}
 	sort.Strings(out)
-	fmt.Println(out)
 	return slices.Compact(out), nil
+}
+
+//=================================================================================
+// Command line interface
+//=================================================================================
+
+// Info prints the message if the verbosity level is level or greater.
+func Info(level int, msg string, args ...any) {
+	if Options.Verbose >= level {
+		log.Printf(msg+"\n", args...)
+	}
+}
+
+// InfoWithFile prints the message, preceeded by the file and line number, if
+// the verbosity level is level or greater.
+func InfoWithFile(level int, pos *FilePos, msg string, args ...any) {
+	if Options.Verbose >= level {
+		log.Printf(fmt.Sprintf("%s:%d: %s\n", pos.filename, pos.lineno, msg), args...)
+	}
+}
+
+// ErrorWithFile returns a new error that includes the file position.
+func ErrorWithFile(pos *FilePos, msg string, args ...any) error {
+	return fmt.Errorf(fmt.Sprintf("%s:%d: %s", pos.filename, pos.lineno, msg), args...)
 }
 
 // printBanner prints a 1 line name/version info to os.Stderr.
@@ -840,14 +936,16 @@ func main() {
 	var err error
 	switch Options.Command {
 	case "weave":
-		f, err := os.Create(Options.WeaveOutFilename)
+        var f *os.File
+		f, err = os.Create(Options.WeaveOutFilename)
 		if err == nil {
 			err = Weave(Options.GivenFiles, f)
 			f.Close()
 		}
 
 	case "tangle":
-		files, err := findTangleFiles(Options.GivenFiles)
+        var files []string
+		files, err = findTangleFiles(Options.GivenFiles)
 		if err == nil {
 			err = Tangle(files)
 		}
