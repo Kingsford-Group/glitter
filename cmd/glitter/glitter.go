@@ -1,9 +1,10 @@
+// (c) 2024 Carl Kingsford <carlk@cs.cmu.edu>.
 package main
 
 import (
 	"bufio"
-    "cmp"
-    "container/list"
+	"cmp"
+	"container/list"
 	"flag"
 	"fmt"
 	"io"
@@ -20,7 +21,17 @@ import (
 	"unicode/utf8"
 )
 
-const VERSION_STR = "0.1"
+const (
+	VERSION_STR = "0.2"
+
+	// MAX_INCLUDE_DEPTH is the maximum depth of includes that GlitterScanner
+	// supports.
+	MAX_INCLUDE_DEPTH = 20
+
+	// Extensions of known file types.
+	TANGLE_OUT_EXT = ".go"
+	GLITTER_EXT    = ".gw"
+)
 
 // GlitterOptions stores global options about how to operate.
 type GlitterOptions struct {
@@ -30,10 +41,66 @@ type GlitterOptions struct {
 	GivenFiles               []string
 	ShowUsage                bool
 	DisallowMultipleIncludes bool
+	ConfigFilename           string
+	WeaveConfig              map[string]string
+}
+
+// NewGlitterOptions returns a new options struct with the defaults.
+func NewGlitterOptions() GlitterOptions {
+	// TODO: support WeaveCommand and TangleCommand to automatically
+	// run the typesetting and building.
+	return GlitterOptions{
+		WeaveConfig: map[string]string{
+			"Start":     `\documentclass{glittertex}`,
+			"StartBock": `\glitterStartBook`,
+			"EndBook":   `\glitterEndBook`,
+			"StartText": `\glitterStartText`,
+			"EndText":   `\glitterEndText$n`,
+
+			// Note that \begin{lstlisting} apparently must be the first
+			// command on a LaTeX line.
+			"StartCode":     `\glitterStartCode{$1}$n\begin{lstlisting}`,
+			"EndCode":       `\end{lstlisting}\glitterEndCode$n`,
+			"CodeEscape":    `#`,
+			"CodeCodeRef":   `#\glitterCodeRef{$1}#`,
+			"TextCodeRef":   `\glitterCodeRef{$1}`,
+			"CodeEscapeSub": `#\glitterHash#`,
+		},
+	}
+}
+
+// ReadWeaveConfig reads a file with the weave configure options. It also sets
+// the defaults.
+func (o *GlitterOptions) ReadWeaveConfig(filename string) error {
+	if len(filename) == 0 {
+		return nil
+	}
+	f, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		subs := weaveConfigRegex.FindStringSubmatch(strings.TrimSpace(scanner.Text()))
+		if subs != nil {
+			o.WeaveConfig[strings.TrimSpace(subs[1])] = strings.ReplaceAll(
+				strings.TrimSpace(subs[2]), "$n", "\n",
+			)
+		}
+	}
+	o.WeaveConfig["StartCode"] = strings.Replace(o.WeaveConfig["StartCode"], "$1", "%s", 1)
+	return scanner.Err()
+}
+
+// GetWeaveConfig returns the value of the configuration option given by name.
+func (o *GlitterOptions) GetWeaveConfig(name string) string {
+	return o.WeaveConfig[name]
 }
 
 // Options is a global variable describing how to operation.
-var Options GlitterOptions
+var Options = NewGlitterOptions()
 
 // LineType is the type of the constants that represent the type of a line.
 type LineType int8
@@ -68,35 +135,33 @@ func (s *SourceLine) Pos() FilePos {
 	return s.pos
 }
 
-// includeRegex matches an include line
-var includeRegex = regexp.MustCompile(`^\s*@include\s+"(.+)"\s*$`)
+var (
+	// includeRegex matches an include line
+	includeRegex = regexp.MustCompile(`^\s*@include\s+"(.+)"\s*$`)
 
-// textStartRegex denotes how a line should begin to start a text block. The :
-// is in () so that we have a group, which is required by lineMatchesWithArg.
-var textStartRegex = regexp.MustCompile(`^\s*@(:)`)
-var codeStartRegex = regexp.MustCompile(`^\s*<<(.+)>>=\s*$`)
-var escapeRegex = regexp.MustCompile(`@'(.)`)
-var spaceRegexp = regexp.MustCompile(`\s+`)
-var topLevelRegex = regexp.MustCompile(`^\*\s*(".*")?\s*(\d+)?\s*$`)
-var topLevelStart = regexp.MustCompile(`^\s*\*`)
-var glitterRegex = regexp.MustCompile(`^\s*@glitter(\s.*)?$`)
-var emptyLineRegex = regexp.MustCompile(`^\s*$`)
+	// textStartRegex denotes how a line should begin to start a text block.
+	// The : is in () so that we have a group, which is required by
+	// lineMatchesWithArg.
+	textStartRegex = regexp.MustCompile(`^\s*@(:+)`)
+	codeStartRegex = regexp.MustCompile(`^\s*<<(.+)>>=\s*$`)
+	escapeRegex    = regexp.MustCompile(`@'(.)`)
+	spaceRegexp    = regexp.MustCompile(`\s+`)
+	topLevelRegex  = regexp.MustCompile(`^\*\s*(".*")?\s*(\d+)?\s*$`)
+	topLevelStart  = regexp.MustCompile(`^\s*\*`)
+	glitterRegex   = regexp.MustCompile(`^\s*@glitter(\s.*)?$`)
+	emptyLineRegex = regexp.MustCompile(`^\s*$`)
 
-// codeRefRegex matches a reference to a code block. The +? operator means
-// match more than one, prefer fewer. This is neded because we may have more
-// than one code ref on a single line. Code refs cannot have unescaped >> in
-// their label.
-var codeRefRegex = regexp.MustCompile(`<<(.+?)>>`)
+	// codeRefRegex matches a reference to a code block. The +? operator means
+	// match more than one, prefer fewer. This is neded because we may have
+	// more than one code ref on a single line. Code refs cannot have unescaped
+	// >> in their label.
+	codeRefRegex = regexp.MustCompile(`<<(.+?)>>`)
+
+	// weaveConfigRegex gives a pattern to match in configuration files.
+	weaveConfigRegex = regexp.MustCompile(`^%%glitter\s+(\S+)\s+(.*)$`)
+)
 
 var errorRecursionTooDeep = fmt.Errorf("include recursion depth exceeds maximum")
-
-// MAX_INCLUDE_DEPTH is the maximum depth of includes that GlitterScanner
-// supports.
-const MAX_INCLUDE_DEPTH = 20
-
-// Extensions of known file types.
-const TANGLE_OUT_EXT = ".go"
-const GLITTER_EXT = ".gw"
 
 // Void is an empty struct.
 type Void struct{}
@@ -296,9 +361,9 @@ func weaveEndBlock(state int, out *bufio.Writer) error {
 	var err error
 	switch state {
 	case InCode:
-		_, err = out.WriteString("\\glitterEndCode")
+		_, err = out.WriteString(Options.GetWeaveConfig("EndCode"))
 	case InText:
-		_, err = out.WriteString("\\glitterEndText")
+		_, err = out.WriteString(Options.GetWeaveConfig("EndText"))
 	}
 	return err
 }
@@ -310,8 +375,27 @@ func removeTextStart(line string) string {
 
 // weaveCodeRefs replaces a <<foo>> in a line with a call to format the code
 // ref.
-func weaveCodeRefs(line string) string {
-	return codeRefRegex.ReplaceAllString(line, `\glitterCodeRef{$1}`)
+func weaveCodeRefs(line string, state int) string {
+	// We handle lstlisting's tex escape character. That package will let us
+	// use latex in a code block, but we have to choose a character that means
+	// start and end the tex region. E.g. #\glitterCodeRef{foo}#. But we need a
+	// character that does not appear in the code block.
+	//
+	// Since /any/ character could appear in a string literal, we have to do
+	// some acrobatics. We set the escape character to #, surround our code ref
+	// latex command with # #, and replace any real # characters with the
+	// #\glitterHash# macro, which is defined to be \texttt{\char35}.
+
+	if state == InCode {
+		line = strings.ReplaceAll(line,
+			Options.GetWeaveConfig("CodeEscape"),
+			Options.GetWeaveConfig("CodeEscapeSub"),
+		)
+		// BUG: what if the code name has a # in it? Need to replace # inside the code
+		// names with \glitterHash without the surrounding # #
+		return codeRefRegex.ReplaceAllString(line, Options.GetWeaveConfig("CodeCodeRef"))
+	}
+	return codeRefRegex.ReplaceAllString(line, Options.GetWeaveConfig("TextCodeRef"))
 }
 
 // replaceEscapes substitutes the escape sequence @'x with x.
@@ -319,14 +403,13 @@ func replaceEscapes(line string) string {
 	return escapeRegex.ReplaceAllString(line, "$1")
 }
 
-// TODO: add config file for specifying text
-
 // Weave creates a typesetable stream, writing it to out.
 func Weave(filenames []string, out io.Writer) error {
 	w := bufio.NewWriter(out)
 	defer w.Flush()
 
-	w.WriteString("\\glitterStartBook\n")
+	w.WriteString(Options.GetWeaveConfig("Start"))
+	w.WriteString("\n")
 
 	state := Start
 	currentFilename := ""
@@ -335,6 +418,7 @@ func Weave(filenames []string, out io.Writer) error {
 	for l := range scanner.Lines() {
 		if l.Pos().filename != currentFilename {
 			currentFilename = l.Pos().filename
+			//TODO: add config option for this
 			w.WriteString(fmt.Sprintf("%%line %d \"%s\"\n", l.Pos().lineno, currentFilename))
 		}
 		// depending on what type of line it is:
@@ -343,22 +427,33 @@ func Weave(filenames []string, out io.Writer) error {
 
 		// if we're starting a text block
 		case TextStartLine:
+			if state == Start {
+				w.WriteString(Options.GetWeaveConfig("StartBook"))
+				w.WriteString("\n")
+			}
 			err := weaveEndBlock(state, w)
 			if err != nil {
 				return err
 			}
-			w.WriteString(`\glitterStartText`)
+			w.WriteString(Options.GetWeaveConfig("StartText"))
 			w.WriteString(removeTextStart(l.Line()))
 			w.WriteString("\n")
 			state = InText
 
 		// if we're starting a code block
+		// TODO: deindent code blocks. Probably requires waiting to write out
+		// until we see the whole block
 		case CodeStartLine:
+			if state == Start {
+				w.WriteString(Options.GetWeaveConfig("StartBook"))
+				w.WriteString("\n")
+			}
 			err := weaveEndBlock(state, w)
 			if err != nil {
 				return err
 			}
-			w.WriteString(fmt.Sprintf("\\glitterStartCode{%s}\n", arg))
+			w.WriteString(fmt.Sprintf(Options.GetWeaveConfig("StartCode"), arg))
+			w.WriteString("\n")
 			InfoWithFile(2, scanner.CurrentFilePos(), "At code block `%s`", arg)
 			state = InCode
 
@@ -366,7 +461,11 @@ func Weave(filenames []string, out io.Writer) error {
 			// do nothing
 
 		case OtherLine:
-			w.WriteString(replaceEscapes(weaveCodeRefs(l.Line())))
+			if state == Start {
+				w.WriteString(replaceEscapes(l.Line()))
+			} else {
+				w.WriteString(replaceEscapes(weaveCodeRefs(l.Line(), state)))
+			}
 			w.WriteString("\n")
 		}
 	}
@@ -376,7 +475,9 @@ func Weave(filenames []string, out io.Writer) error {
 		log.Println(err)
 	} else {
 		err = weaveEndBlock(state, w)
-		w.WriteString("\n\\glitterEndBook\n")
+		w.WriteString("\n")
+		w.WriteString(Options.GetWeaveConfig("EndBook"))
+		w.WriteString("\n")
 	}
 	return err
 }
@@ -419,7 +520,7 @@ func parseTopLevelName(name, defaultFile string) (filename string, order int, ok
 	for _, g := range subs[1:] {
 		if strings.HasPrefix(g, `"`) {
 			// filename without the quotes
-            filename = filepath.Clean(trimQuotes(g))
+			filename = filepath.Clean(trimQuotes(g))
 		} else {
 			o, err := strconv.Atoi(g)
 			if err == nil {
@@ -433,41 +534,41 @@ func parseTopLevelName(name, defaultFile string) (filename string, order int, ok
 // splitTopLevelName splits a well-formed, complete top-level name into its
 // components.
 func splitTopLevelName(name string) (string, int, error) {
-    subs := topLevelRegex.FindStringSubmatch(name)
-    if subs == nil || len(subs) != 3 {
-        return "", 0, fmt.Errorf("internally incorrectly constructed top-level `%s`", name)
-    }
-    n, err := strconv.Atoi(subs[2])
-    if err != nil {
-        return "", 0, fmt.Errorf("internally incorrectly constructed top-level `%s`", name)
-    }
-    
-    return trimQuotes(subs[1]), n, nil
+	subs := topLevelRegex.FindStringSubmatch(name)
+	if subs == nil || len(subs) != 3 {
+		return "", 0, fmt.Errorf("internally incorrectly constructed top-level `%s`", name)
+	}
+	n, err := strconv.Atoi(subs[2])
+	if err != nil {
+		return "", 0, fmt.Errorf("internally incorrectly constructed top-level `%s`", name)
+	}
+
+	return trimQuotes(subs[1]), n, nil
 }
 
 // trimQuotes removes leading and trailing whitespace and a single " from the
 // start and end of the string (if they exist)
 func trimQuotes(s string) string {
-    s = strings.TrimSpace(s)
-    s, _ = strings.CutPrefix(s, `"`)
-    s, _ = strings.CutSuffix(s, `"`)
-    return s
+	s = strings.TrimSpace(s)
+	s, _ = strings.CutPrefix(s, `"`)
+	s, _ = strings.CutSuffix(s, `"`)
+	return s
 }
 
 // removeBlankLines removes blank lines from the start and end of the block
 func removeBlankLines(block []string) []string {
-    var first, last int
-    for first = range block {
-        if !emptyLineRegex.MatchString(block[first]) {
-            break
-        }
-    }
-    for last = len(block)-1; last >= 0; last-- {
-        if !emptyLineRegex.MatchString(block[last]) {
-            break
-        }
-    }
-    return block[first:last+1]
+	var first, last int
+	for first = range block {
+		if !emptyLineRegex.MatchString(block[first]) {
+			break
+		}
+	}
+	for last = len(block) - 1; last >= 0; last-- {
+		if !emptyLineRegex.MatchString(block[last]) {
+			break
+		}
+	}
+	return block[first : last+1]
 }
 
 // whiteSpacePrefixLength returns the number of whitespace runes that prefix
@@ -549,7 +650,7 @@ func tangleReadBlocks(filenames []string) (map[string][]string, error) {
 	currentFilename := ""
 	defaultFilename := ""
 
-    // TODO: test and correct default filename handling for includes and toplevel files.
+	// TODO: test and correct default filename handling for includes and toplevel files.
 	scanner := NewGlitterScanner(filenames)
 	for l := range scanner.Lines() {
 		// if we're reading a top-level file, make sure the default filename
@@ -579,7 +680,7 @@ func tangleReadBlocks(filenames []string) (map[string][]string, error) {
 					)
 				}
 				// if the filename is empty or a single ., then switch back to
-				// the main output file. 
+				// the main output file.
 				if len(filename) == 0 || filename == "." {
 					filename = defaultFilename
 				}
@@ -616,35 +717,35 @@ func tangleReadBlocks(filenames []string) (map[string][]string, error) {
 
 // getTopLevelBlocks returns a list of the names of all the top-level blocks.
 func getTopLevelBlocks(blocks map[string][]string) (out []string, err error) {
-    out = make([]string, 0)
-    for k := range blocks {
-        if isTopLevelName(k) {
-            out = append(out, k)
-        }
-    }
+	out = make([]string, 0)
+	for k := range blocks {
+		if isTopLevelName(k) {
+			out = append(out, k)
+		}
+	}
 
-    // if the comparison function panics, catch the error and return in in the
-    // normal way.
-    defer func() {
-        if r := recover(); r != nil {
-            err = fmt.Errorf("cmp error: %v", r)
-        }
-    }()
-    slices.SortFunc(out, func(a,b string) int {
-        fa, na, err := splitTopLevelName(a)
-        if err != nil {
-            panic(err)
-        }
-        fb, nb, err := splitTopLevelName(b)
-        if err != nil {
-            panic(err)
-        }
-        if n := cmp.Compare(fa, fb); n != 0 {
-            return n
-        }
-        return cmp.Compare(na, nb)
-    })
-    return
+	// if the comparison function panics, catch the error and return in in the
+	// normal way.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("cmp error: %v", r)
+		}
+	}()
+	slices.SortFunc(out, func(a, b string) int {
+		fa, na, err := splitTopLevelName(a)
+		if err != nil {
+			panic(err)
+		}
+		fb, nb, err := splitTopLevelName(b)
+		if err != nil {
+			panic(err)
+		}
+		if n := cmp.Compare(fa, fb); n != 0 {
+			return n
+		}
+		return cmp.Compare(na, nb)
+	})
+	return
 }
 
 // TODO: add //line N "file" comments to the output of tangle
@@ -652,76 +753,76 @@ func getTopLevelBlocks(blocks map[string][]string) (out []string, err error) {
 // expandLine will recursively substitute << >> references, trying to maintain
 // correct line breaks and indentation.
 func expandLine(blocks map[string][]string, line string) (*list.List, error) {
-    out := list.New()
-    pos := codeRefRegex.FindStringSubmatchIndex(line)
-    // if there are no substitutions to be made, the line is all we have
-    if pos == nil {
-        out.PushBack(line)
-        return out, nil
-    }
+	out := list.New()
+	pos := codeRefRegex.FindStringSubmatchIndex(line)
+	// if there are no substitutions to be made, the line is all we have
+	if pos == nil {
+		out.PushBack(line)
+		return out, nil
+	}
 
-    startRef := pos[0]
-    endRef := pos[1]
-    blockName := canonicalCodeName(strings.TrimSpace(line[pos[2]:pos[3]]))
+	startRef := pos[0]
+	endRef := pos[1]
+	blockName := canonicalCodeName(strings.TrimSpace(line[pos[2]:pos[3]]))
 
-    if isTopLevelName(blockName) {
-        return nil, fmt.Errorf("cannot reference top-level block")
-    }
+	if isTopLevelName(blockName) {
+		return nil, fmt.Errorf("cannot reference top-level block")
+	}
 
-    before := line[:startRef]
-    after := line[endRef:]
-    indent := utf8.RuneCountInString(before)
+	before := line[:startRef]
+	after := line[endRef:]
+	indent := utf8.RuneCountInString(before)
 
-    refdBlock, ok := blocks[blockName]
-    if !ok {
-        //TODO: be able to report the file pos
-        return nil, fmt.Errorf("unknown block reference `%s`", blockName)
-    }
+	refdBlock, ok := blocks[blockName]
+	if !ok {
+		//TODO: be able to report the file pos
+		return nil, fmt.Errorf("unknown block reference `%s`", blockName)
+	}
 
-    // if the referenced block is empty, it becomes a single space
-    if (len(refdBlock) == 0) {
-        out.PushBack(before + " " + after)
-    } else {
-        // otherwise, we turn it into this:
-        // BEFORE<<------>>AFTER
-        // beforeLINE1
-        //       LINE2
-        //       LINE3
-        //       LINEnafter
-        for i, refline := range refdBlock {
-            if i == 0 {
-                refline = before + refline
-            } 
-            if i == len(refdBlock)-1 {
-                refline = refline + after
-            }
-            if i != 0 {
-                refline = strings.Repeat(" ", indent) + refline
-            }
-            sublist, err := expandLine(blocks, refline)
-            if err != nil {
-                return nil, err
-            }
-            out.PushBackList(sublist)
-        }
-    }
-    return out, nil
+	// if the referenced block is empty, it becomes a single space
+	if len(refdBlock) == 0 {
+		out.PushBack(before + " " + after)
+	} else {
+		// otherwise, we turn it into this:
+		// BEFORE<<------>>AFTER
+		// beforeLINE1
+		//       LINE2
+		//       LINE3
+		//       LINEnafter
+		for i, refline := range refdBlock {
+			if i == 0 {
+				refline = before + refline
+			}
+			if i == len(refdBlock)-1 {
+				refline = refline + after
+			}
+			if i != 0 {
+				refline = strings.Repeat(" ", indent) + refline
+			}
+			sublist, err := expandLine(blocks, refline)
+			if err != nil {
+				return nil, err
+			}
+			out.PushBackList(sublist)
+		}
+	}
+	return out, nil
 }
 
 // expandAndWriteBlock expands all << >> refs in a code block and writes the
 // block to the given stream.
 func expandAndWriteBlock(b []string, blocks map[string][]string, out *bufio.Writer) error {
-    for _, line := range b {
-        newLine, err := expandLine(blocks, line) 
-        if err != nil {
-            return err
-        }
-        for e := newLine.Front(); e != nil; e = e.Next() {
-            out.WriteString(replaceEscapes(e.Value.(string)))
-            out.WriteString("\n")
-        }
-    }
-    return nil
+	for _, line := range b {
+		newLine, err := expandLine(blocks, line)
+		if err != nil {
+			return err
+		}
+		for e := newLine.Front(); e != nil; e = e.Next() {
+			out.WriteString(replaceEscapes(e.Value.(string)))
+			out.WriteString("\n")
+		}
+	}
+	return nil
 }
 
 // Tangle produces a set of source code files that can be compiled into the
@@ -733,57 +834,57 @@ func Tangle(filenames []string) error {
 		return err
 	}
 
-    topBlocks, err := getTopLevelBlocks(blocks)
-    if err != nil {
-        return err
-    }
-    if len(topBlocks) == 0 {
-        return fmt.Errorf("no top-level code blocks found")
-    }
-    Info(2, "%d total top-level blocks found", len(topBlocks))
+	topBlocks, err := getTopLevelBlocks(blocks)
+	if err != nil {
+		return err
+	}
+	if len(topBlocks) == 0 {
+		return fmt.Errorf("no top-level code blocks found")
+	}
+	Info(2, "%d total top-level blocks found", len(topBlocks))
 
-    var curOut *os.File
-    var curBuff *bufio.Writer
+	var curOut *os.File
+	var curBuff *bufio.Writer
 
-    closeFile := func () {
-        if curBuff != nil {
-            curBuff.Flush()
-        }
-        if curOut != nil {
-            curOut.Close()
-        }
-    }
-    defer closeFile()
+	closeFile := func() {
+		if curBuff != nil {
+			curBuff.Flush()
+		}
+		if curOut != nil {
+			curOut.Close()
+		}
+	}
+	defer closeFile()
 
-    currentFilename := ""
+	currentFilename := ""
 
-    // go through each top level block
-    for _, b := range topBlocks {
-        f, o, err := splitTopLevelName(b)
-        if err != nil {
-            return err
-        }
+	// go through each top level block
+	for _, b := range topBlocks {
+		f, o, err := splitTopLevelName(b)
+		if err != nil {
+			return err
+		}
 
-        // if we are starting a new file, create the new output file
-        if f != currentFilename {
-            closeFile()
-            curOut, err = os.Create(f)
-            if err != nil {
-                return err
-            }
-            curBuff = bufio.NewWriter(curOut)
-            currentFilename = f
-            Info(1, "Writing to `%s` (order %d)", currentFilename, o)
-        } else {
-            // writing a new block to the same file, separate with a blank
-            // line.
-            curBuff.WriteString("\n")
-        }
-        err = expandAndWriteBlock(blocks[b], blocks, curBuff)
-        if err != nil {
-            return err
-        }
-    }
+		// if we are starting a new file, create the new output file
+		if f != currentFilename {
+			closeFile()
+			curOut, err = os.Create(f)
+			if err != nil {
+				return err
+			}
+			curBuff = bufio.NewWriter(curOut)
+			currentFilename = f
+			Info(1, "Writing to `%s` (order %d)", currentFilename, o)
+		} else {
+			// writing a new block to the same file, separate with a blank
+			// line.
+			curBuff.WriteString("\n")
+		}
+		err = expandAndWriteBlock(blocks[b], blocks, curBuff)
+		if err != nil {
+			return err
+		}
+	}
 
 	return err
 }
@@ -838,18 +939,18 @@ func findTopFiles(filename string) ([]string, error) {
 	}
 	out := make([]string, 0)
 	if stat.IsDir() {
-		err := filepath.WalkDir(filename, 
-            func(path string, d fs.DirEntry, err error) error {
-                if err != nil {
-                    return err
-                }
-                if !d.IsDir() && filepath.Ext(d.Name()) == GLITTER_EXT {
-                    if hasGlitterProp(d.Name(), "top") {
-                        out = append(out, path)
-                    }
-                }
-                return nil
-            })
+		err := filepath.WalkDir(filename,
+			func(path string, d fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if !d.IsDir() && filepath.Ext(d.Name()) == GLITTER_EXT {
+					if hasGlitterProp(d.Name(), "top") {
+						out = append(out, path)
+					}
+				}
+				return nil
+			})
 		if err != nil {
 			return nil, err
 		}
@@ -917,6 +1018,7 @@ func init() {
 	flag.StringVar(&Options.WeaveOutFilename, "out", "default.tex", "output for weave command")
 	flag.BoolVar(&Options.ShowUsage, "h", false, "show usage and quit")
 	flag.BoolVar(&Options.DisallowMultipleIncludes, "forbid-multiple-includes", false, "read every file only once")
+	flag.StringVar(&Options.ConfigFilename, "config", "glittertex.cls", "configure substitutions")
 }
 
 func main() {
@@ -936,7 +1038,11 @@ func main() {
 	var err error
 	switch Options.Command {
 	case "weave":
-        var f *os.File
+		err = Options.ReadWeaveConfig(Options.ConfigFilename)
+		if err != nil {
+			break
+		}
+		var f *os.File
 		f, err = os.Create(Options.WeaveOutFilename)
 		if err == nil {
 			err = Weave(Options.GivenFiles, f)
@@ -944,7 +1050,7 @@ func main() {
 		}
 
 	case "tangle":
-        var files []string
+		var files []string
 		files, err = findTangleFiles(Options.GivenFiles)
 		if err == nil {
 			err = Tangle(files)
