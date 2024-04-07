@@ -36,7 +36,7 @@
     texcl=true,%
     escapechar=\#,%
     extendedchars=true,%
-    xleftmargin=0em,%
+    xleftmargin=2em,%
     showlines=false,
     numbers=left,
 }
@@ -58,10 +58,11 @@
 %%glitter CodeCodeRef   #\glitterCodeRef{$1}#
 %%glitter TextCodeRef   \glitterCodeRef{$1}
 %%glitter CodeEscapeSub #\glitterHash#
+%%glitter InlineCode    \lstinline@$1@
 
-%%glitter WeaveLineRef  %%line $1 "$2"
-%%glitter TangleLineRef //line $1 "$2"
-%%glitter WeaveCommand  pdflatex $1
+%%glitter WeaveLineRef  %%line $lineno "$filename"$n
+%%glitter TangleLineRef /*line $filename:$lineno*/
+%%glitter WeaveCommand  pdflatex ${WeaveFile}
 %%glitter TangleCommand go build
 
 \newcommand\glitterStartBook{\begin{document}}

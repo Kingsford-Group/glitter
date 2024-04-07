@@ -102,9 +102,11 @@ This writes the configuration to a options file.
 * `<<code block name>>=` on a line of its own starts a code block.
 * `<<* “file” 10>>=` on a line of its own starts a top-level block that will be written to “file”; blocks written to that file will be sorted by the number given in the 3rd position (e.g. 10). The `“file”` and/or the number may be omitted, in which case defaults will be used.
 * `@include "file"` is (recursively) replaced by the contents of “file”.
-* `@glitter top` as the first non-blank line in a file does two things: (1) marks the file for inclusion when a directory is given to tangle; and (2) sets the default output filename to a modification of the current glitter filename (`.gw` → `.go`). This command is scoped to the file and its include subtree. [The odd syntax is to leave room for other options besides `top` in the future.]
+* `@glitter top` as the first non-blank line in a file does two things: (1) marks the file for inclusion when a directory is given to tangle; and (2) sets the default output filename to a modification of the current glitter filename (`.gw` → `.go`). This command is scoped to the file and its include subtree.
+* Lines between `@glitter hide` and `@glitter show` are not output to the weaved file.
 * `@'x` means: at the last possible moment, just before writing to a file, replace with `x`, where `x` can be any character.
-* `<<code block name>>` inside of a code block is (recursively) substituted with the content of the named code block during tangle.
+* `<<code block name>>` inside of a code block is (recursively) substituted with the content of the named code block during tangle. Inside a text block, it is typeset specially.
+* `[[ … ]]` inside of a text block is typeset as code.
 
 ## Command line usage
 
@@ -126,11 +128,13 @@ You must list the files explicitly so that glitter knows what order to typeset t
 @include “why.gw”
 ```
 
-Whitespace at the start of each line in a code block is removed in such a way to shift the code block as far to the left as possible. Blank lines at the start and end of the code block are removed. [NYI]
+Whitespace at the start of each line in a code block is removed in such a way to shift the code block as far to the left as possible. Blank lines at the start and end of the code block are removed.
 
 Comments of the form `%line N “file”` are included whenever the file switches.
 
 Any lines before the first block encountered in a run are output between the command that starts the file (`Start` below) and the command that starts the content (`StartBook` below). This means that lines before the first block encountered are added to the LaTeX preamble (assuming you are using LaTeX).
+
+Unless you give the `-dont-build` option, the output of weave will be run through `pdflatex` (or whatever command is given by the `WeaveCommand` configuration option).
 
 ### Tangling
 
@@ -189,25 +193,32 @@ During tangling of a top-level block, the following happens in order:
 
 3. The resulting expanded text is written to the file.
 
-## Weaving substitutions
+Unless you give the `-dont-build`, following the tangle, the command given by the `TangleCommand` is run after tangling (by default `go build`).
+
+## Configuration Files
 
 By default, the output of weave is a text file that uses the LaTeX class `glittertex`. If you are happy with this, there is nothing you need to change. You can typeset the file using `pdflatex foo.tex`. But much of this output can be customized.
 
-The default substitutions are given in the table below. The `\glitter…` commands are defined in the `glittertex` LaTeX class.
+The default substitutions and options are given in the table below. The `\glitter…` commands are defined in the `glittertex` LaTeX class.
 
-| Glitter                     | Option        | Default                                     |
-| --------------------------- | ------------- | ------------------------------------------- |
-| `@:`                        | StartText     | `\glitterStartText`                         |
-| end of `@:` block           | EndText       | `\glitterEndText$n`                         |
-| `<<code block name>>=`      | StartCode     | `\glitterStartCode{$1}$n\begin{lstlisting}` |
-| end of `<<…>>=` code block  | EndCode       | `\end{lstlisting}\glitterEndCode$n`         |
-| `<< … >>` in code block     | CodeCodeRef   | `#\glitterCodeRef{$1}#`                     |
-| `<< … >>` in text block     | TextCodeRef   | `\glitterCodeRef{$1}`                       |
-| Start of output             | Start         | `\documentclass{glittertex}`                |
-| Before start of first block | StartBook     | `\glitterStartBook`                         |
-| End of output               | EndBook       | `\glitterEndBook`                           |
-|                             | CodeEscape    | `#`                                         |
-| CodeEscape in code block    | CodeEscapeSub | `#\glitterHash#`                            |
+| Glitter                                 | Option        | Default                                                      |
+| --------------------------------------- | ------------- | ------------------------------------------------------------ |
+| `@:`                                    | StartText     | `\glitterStartText`                                          |
+| end of `@:` block                       | EndText       | `\glitterEndText$n`                                          |
+| `<<code block name>>=`                  | StartCode     | `\glitterStartCode{$1}$n\begin{lstlisting}`                  |
+| end of `<<…>>=` code block              | EndCode       | `\end{lstlisting}\glitterEndCode$n`                          |
+| `<< … >>` in code block                 | CodeCodeRef   | `#\glitterCodeRef{$1}#`                                      |
+| `<< … >>` in text block                 | TextCodeRef   | `\glitterCodeRef{$1}`                                        |
+| `[[ … ]]` in text block                 | InlineCode    | `\lstinline@$1@`                                             |
+| Start of output                         | Start         | `\documentclass{glittertex}`                                 |
+| Before start of first block             | StartBook     | `\glitterStartBook`                                          |
+| End of output                           | EndBook       | `\glitterEndBook`                                            |
+|                                         | CodeEscape    | `#`                                                          |
+| CodeEscape in code block                | CodeEscapeSub | `#\glitterHash#`                                             |
+| Marking line and file changes in weave  | WeaveLineRef  | `%%line $lineno "$filename"$n` (The `lineno` and `filename` variables are replaced with the line number and filename.) |
+| Marking line and file changes in tangle | TangleLineRef | `/*line $filename:$lineno*/`                                 |
+| Command to run after weave              | WeaveCommand  | `pdflatex ${WeaveFile}` (The `WeaveFile` variable is replaced with the weave output filename.) |
+| Command to run after tangle             | TangleCommand | `go build`                                                   |
 
 Any of these substitutions can be changed by reading a configuration file with lines of the form:
 
@@ -231,6 +242,10 @@ Here is a configuration file that mimics the default options:
 %%glitter CodeCodeRef   #\glitterCodeRef{$1}#
 %%glitter TextCodeRef   \glitterCodeRef{$1}
 %%glitter CodeEscapeSub #\glitterHash#
+%%glitter WeaveLineRef  %%line $lineno "$filename"$n
+%%glitter TangleLineRef /*line $filename:$lineno*/
+%%glitter WeaveCommand  pdflatex ${WeaveFile}
+%%glitter TangleCommand go build
 ```
 
 In fact, you will find these lines in the `glittertex.cls` file that defines the LaTeX class that is used. When reading the configuration, any lines that do not start with `%%glitter ` are ignored. This means that the `glittertex.cls` file contains its own weave configuration, making it easy to co-edit the weave options and the corresponding LaTeX definitions. 
@@ -245,15 +260,21 @@ If you don’t specify the `-config` option, glitter will use its built-in defau
 
 The substitution of `#` to `#\glitterHash#` deserves some explanation. In the default templates, the code blocks are typeset using the `listings` LaTeX package. To typeset a code ref inside of listings, we enable escaping to LaTeX with the `#` character. Hence, in a code block, a ref is output as `#\glitterCodeRef{foo}#`. But your code might have a `#` in it (in a comment, or string literal for example). If it does, it is replaced by `#\glitterHash#`, and `\glitterHash` by default is defined to be `\texttt{\char35}`, which is a `#` (using standard font encodings)! This will make the `#` appear, but won’t confuse `listings` with a `#` character.
 
+Note that *you* the author of the glitter file cannot use `#` to escape to latex in a code block. The facility is internal to glitter and customizable so that different substitutions can be made if you are not using LaTex as the typesetting engine.
+
 # Roadmap
 
 This is a work in progress. Commits may not compile, and currently it is just barely usable. Both tangle and weave work, though are not tested in any systematic way.
 
 Things to do:
 
-1. Output `//line n “file”` comments in tangle
-2. Options to handle some go-specific things (like automatic insertion of `package` statements)
-3. Improve error messages
-4. Special syntax (like noweb’s `[[ … ]]`) to typeset code inside a text block, e.g. by replacing with `\lstinline`
-5. Indexing and cross-referencing (i.e. “code is used in …” or forward page references. Ideally leveraging LaTeX’s facilities.)
-6. Hidden chunks that exist, but aren’t displayed in the typeset document.
+1. Typeset += for blocks that are concatenated to other blocks
+2. Output `/*line file:n*/` comments in tangle
+3. Indexing, primarily the ability to index terms appearing in code blocks. Perhaps use `@` to label a word for indexing? Or figure out a way to use go ast to find terms.
+4. Cross-referencing (i.e. “code is used in …” or forward page references. Ideally leveraging LaTeX’s facilities.)
+5. Table of important blocks
+6. Options to handle some go-specific things:
+   1. automatic insertion of `package` statements? Might not be worth it.
+   2. conversion of text blocks to documentation comments, or `doc.go` files?
+7. Support for partial code references a la CWEB `<<A long block name is…>>`
+8. Performance enhancements? For example, memoizing the substituted blocks (rather than re-expanding on every use)
