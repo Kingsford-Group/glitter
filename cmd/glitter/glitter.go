@@ -840,7 +840,7 @@ func getTopLevelBlocks(blocks map[string]Block) (out []string, err error) {
 	return
 }
 
-// TODO: add //line N "file" comments to the output of tangle
+// TODO: add /*line file:N*/ comments to the output of tangle
 
 // expandLine will recursively substitute << >> references, trying to maintain
 // correct line breaks and indentation.

@@ -33,6 +33,8 @@ A block ends when another block starts or the file ends.
 
 A string in a code block of the form `<<.+>>` is a substitution call. It is recursively replaced by the code in code block with the same canonical name as given between the `<<`…`>>`. If non-whitespace characters follow `>>` on the same line as a substitution, the final trailing newline character in the code referenced code block is removed before substitution.
 
+A `<< … >>` reference in text is typeset appropriately (without any checks or reformating, except reformatting done by your typesetter). Text in a text block surrounded by `[[ … ]]` (on a single line) is typeset as code. Due to a technical limitation, code within such a block cannot contain a `@`. (If you need to include a `@` use, e.g., `\lstinline!….!` directly.)
+
 **Canonical names** are formed by:
 
 * removing leading and trailing whitespace
@@ -67,6 +69,8 @@ The current output file (and the default output file) are both reset when a new 
 
 When tangling, the effect of a `@glitter top` line is to set the current and default output files to be the same name as the current source file with its extension changed.
 
+Lines between `@glitter hide` … `@glitter show` are not included in the typeset woven document. These commands have no effect on tangle. To “comment out” a code block for tangle, simply don’t reference it.
+
 ## Escapes
 
 Anyplace, a sequence `@'x` is treated as a single occurrence of `x` but only *after* the special patterns are interpreted. For example, `@'@` is a single `@` and `@'<` is a single `<`. Occurrences of `@` and `<` that can’t be interpreted as one of the forms above do not need to be escaped. Substitution of escapes is applied as late as possible in the processing. 
@@ -75,7 +79,7 @@ Note that this rule doesn’t make characters inactive. So in ``<<foo @'>> moose
 
 ## Includes
 
-A line matching with `^\s*@include\s+".+"$` is an include line. It is replaced by the contents of the file named between the quotes. Includes act (nearly) exactly as if the lines in the included file were typed in at the point of the include. The one exception to this is the `@glitter` command which always has file scope. 
+A line matching with `^\s*@include\s+".+"$` is an include line. It is replaced by the contents of the file named between the quotes. Includes act (nearly) exactly as if the lines in the included file were typed in at the point of the include. The one exception to this is the `@glitter top` command which always has include tree scope, meaning that a `@glitter top` means “set the filename to this file and the includes under it to be the inferred filename.”
 
 ## Example
 
@@ -103,10 +107,10 @@ This writes the configuration to a options file.
 * `<<* “file” 10>>=` on a line of its own starts a top-level block that will be written to “file”; blocks written to that file will be sorted by the number given in the 3rd position (e.g. 10). The `“file”` and/or the number may be omitted, in which case defaults will be used.
 * `@include "file"` is (recursively) replaced by the contents of “file”.
 * `@glitter top` as the first non-blank line in a file does two things: (1) marks the file for inclusion when a directory is given to tangle; and (2) sets the default output filename to a modification of the current glitter filename (`.gw` → `.go`). This command is scoped to the file and its include subtree.
-* Lines between `@glitter hide` and `@glitter show` are not output to the weaved file.
+* Lines between `@glitter hide` and `@glitter show` are not output to the weaved file. Includes between these lines are skipped. They mean: when weaving, totally ignore everything between them.
 * `@'x` means: at the last possible moment, just before writing to a file, replace with `x`, where `x` can be any character.
 * `<<code block name>>` inside of a code block is (recursively) substituted with the content of the named code block during tangle. Inside a text block, it is typeset specially.
-* `[[ … ]]` inside of a text block is typeset as code.
+* `[[ … ]]` inside of a text block is typeset as code. There cannot be a `@` (escaped or otherwise) between the `[[ ]]`.
 
 ## Command line usage
 
@@ -132,7 +136,7 @@ Whitespace at the start of each line in a code block is removed in such a way to
 
 Comments of the form `%line N “file”` are included whenever the file switches.
 
-Any lines before the first block encountered in a run are output between the command that starts the file (`Start` below) and the command that starts the content (`StartBook` below). This means that lines before the first block encountered are added to the LaTeX preamble (assuming you are using LaTeX).
+Any lines before the first block encountered in a run are output between the command that starts the file (`Start` below) and the command that starts the content (`StartBook` below), only replacing `@‘` escapes. This means that lines before the first block encountered are added to the LaTeX preamble (assuming you are using LaTeX).
 
 Unless you give the `-dont-build` option, the output of weave will be run through `pdflatex` (or whatever command is given by the `WeaveCommand` configuration option).
 
@@ -146,7 +150,7 @@ glitter tangle dir1 dir2 file1 dir3 file2
 
 Tangle may be given a list of directories and files.
 
-For each directory, the tree rooted at that directory will be scanned for all files ending with `.gw`. If the first non-blank line in a file that is found is `@glitter top` then the file will be added to the list of files to process.
+For each directory, the tree rooted at that directory will be scanned for all files ending with `.gw` (symlinks are not followed). If the first non-blank line in a file that is found is `@glitter top` then the file will be added to the list of files to process.
 
 If a file is given explicitly, then it is always added to the list of files that are processed.
 
@@ -197,7 +201,7 @@ Unless you give the `-dont-build`, following the tangle, the command given by th
 
 ## Configuration Files
 
-By default, the output of weave is a text file that uses the LaTeX class `glittertex`. If you are happy with this, there is nothing you need to change. You can typeset the file using `pdflatex foo.tex`. But much of this output can be customized.
+By default, the output of weave is a text file that uses the LaTeX class `glittertex`. If you are happy with this, there is nothing you need to change. You can typeset the file using `pdflatex foo.tex` (or it will be typeset automatically if you don’t get `-dont-build`). But much of this output can be customized.
 
 The default substitutions and options are given in the table below. The `\glitter…` commands are defined in the `glittertex` LaTeX class.
 
@@ -215,7 +219,7 @@ The default substitutions and options are given in the table below. The `\glitte
 | End of output                           | EndBook       | `\glitterEndBook`                                            |
 |                                         | CodeEscape    | `#`                                                          |
 | CodeEscape in code block                | CodeEscapeSub | `#\glitterHash#`                                             |
-| Marking line and file changes in weave  | WeaveLineRef  | `%%line $lineno "$filename"$n` (The `lineno` and `filename` variables are replaced with the line number and filename.) |
+| Marking line and file changes in weave  | WeaveLineRef  | `%%line $lineno "$filename"$n` (The `lineno` and `filename` variables are replaced with the line number and filename. You can use the syntax `$lineno` or `${lineno}`) |
 | Marking line and file changes in tangle | TangleLineRef | `/*line $filename:$lineno*/`                                 |
 | Command to run after weave              | WeaveCommand  | `pdflatex ${WeaveFile}` (The `WeaveFile` variable is replaced with the weave output filename.) |
 | Command to run after tangle             | TangleCommand | `go build`                                                   |
@@ -242,6 +246,7 @@ Here is a configuration file that mimics the default options:
 %%glitter CodeCodeRef   #\glitterCodeRef{$1}#
 %%glitter TextCodeRef   \glitterCodeRef{$1}
 %%glitter CodeEscapeSub #\glitterHash#
+%%glitter InlineCode    \lstinline@$1@
 %%glitter WeaveLineRef  %%line $lineno "$filename"$n
 %%glitter TangleLineRef /*line $filename:$lineno*/
 %%glitter WeaveCommand  pdflatex ${WeaveFile}
@@ -272,9 +277,9 @@ Things to do:
 2. Output `/*line file:n*/` comments in tangle
 3. Indexing, primarily the ability to index terms appearing in code blocks. Perhaps use `@` to label a word for indexing? Or figure out a way to use go ast to find terms.
 4. Cross-referencing (i.e. “code is used in …” or forward page references. Ideally leveraging LaTeX’s facilities.)
-5. Table of important blocks
+5. Table of important blocks (Codeblocks that follow @≡ ?)
 6. Options to handle some go-specific things:
-   1. automatic insertion of `package` statements? Might not be worth it.
+   1. automatic insertion of `package` statements? [Might not be worth it.]
    2. conversion of text blocks to documentation comments, or `doc.go` files?
-7. Support for partial code references a la CWEB `<<A long block name is…>>`
+7. Support for partial code references a la CWEB `<<A long block name is…>>` [May add too much uncertainty and room for errors.]
 8. Performance enhancements? For example, memoizing the substituted blocks (rather than re-expanding on every use)
