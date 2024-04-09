@@ -207,25 +207,26 @@ By default, the output of weave is a text file that uses the LaTeX class `glitte
 
 The default substitutions and options are given in the table below. The `\glitter…` commands are defined in the `glittertex` LaTeX class.
 
-| Glitter                                 | Option        | Default                                                      |
-| --------------------------------------- | ------------- | ------------------------------------------------------------ |
-| `@:`                                    | StartText     | `\glitterStartText`                                          |
-| end of `@:` block                       | EndText       | `\glitterEndText$n`                                          |
-| before `StartCode`                      | CodeSet       | `\glitterSet{append={$append},blocktable=${blocktable},labelbase={$labelbase},labelnum=$labelnum}` This sets options for the next code block. |
-| `<<code block name>>=`                  | StartCode     | `\glitterStartCode{$1}$n\begin{lstlisting}`                  |
-| end of `<<…>>=` code block              | EndCode       | `\end{lstlisting}\glitterEndCode$n`                          |
-| `<< … >>` in code block                 | CodeCodeRef   | `#\glitterCodeRef{$1}#`                                      |
-| `<< … >>` in text block                 | TextCodeRef   | `\glitterCodeRef{$1}`                                        |
-| `[[ … ]]` in text block                 | InlineCode    | `\lstinline@$1@`                                             |
-| Start of output                         | Start         | `\documentclass{glittertex}`                                 |
-| Before start of first block             | StartBook     | `\glitterStartBook`                                          |
-| End of output                           | EndBook       | `\glitterEndBook`                                            |
-|                                         | CodeEscape    | `#`                                                          |
-| CodeEscape in code block                | CodeEscapeSub | `#\glitterHash#`                                             |
-| Marking line and file changes in weave  | WeaveLineRef  | `%%line $lineno "$filename"$n` (The `lineno` and `filename` variables are replaced with the line number and filename. You can use the syntax `$lineno` or `${lineno}`) |
-| Marking line and file changes in tangle | TangleLineRef | `/*line $filename:$lineno*/`                                 |
-| Command to run after weave              | WeaveCommand  | `pdflatex ${WeaveFile}` (The `WeaveFile` variable is replaced with the weave output filename.) |
-| Command to run after tangle             | TangleCommand | `go build`                                                   |
+| Glitter                                                      | Option        | Default                                                      |
+| ------------------------------------------------------------ | ------------- | ------------------------------------------------------------ |
+| `@:`                                                         | StartText     | `\glitterStartText`                                          |
+| end of `@:` block                                            | EndText       | `\glitterEndText$n`                                          |
+| before `StartCode`                                           | CodeSet       | `\glitterSet{append={$append},blocktable=${blocktable},labelbase={$labelbase},labelnum=$labelnum}` This sets options for the next code block. |
+| `<<code block name>>=`                                       | StartCode     | `\glitterStartCode{$1}$n\begin{lstlisting}`                  |
+| end of `<<…>>=` code block                                   | EndCode       | `\end{lstlisting}\glitterEndCode$n`                          |
+| `<< … >>` in code block                                      | CodeCodeRef   | `#\glitterCodeRef{$1}#`                                      |
+| `<< … >>` in text block                                      | TextCodeRef   | `\glitterCodeRef{$1}`                                        |
+| `[[ … ]]` in text block                                      | InlineCode    | `\lstinline@$1@`                                             |
+| Start of output                                              | Start         | `\documentclass{glittertex}`                                 |
+| Before start of first block                                  | StartBook     | `\glitterStartBook`                                          |
+| End of output                                                | EndBook       | `\glitterEndBook`                                            |
+|                                                              | CodeEscape    | `#`                                                          |
+| CodeEscape in code block                                     | CodeEscapeSub | `#\glitterHash#`                                             |
+| Marking line and file changes in weave                       | WeaveLineRef  | `%%line $lineno "$filename"$n` (The `lineno` and `filename` variables are replaced with the line number and filename. You can use the syntax `$lineno` or `${lineno}`) |
+| Marking line and file changes in tangle                      | TangleLineRef | `/*line $filename:$lineno*/`                                 |
+| Command to run after weave                                   | WeaveCommand  | `pdflatex ${WeaveFile}` (The `WeaveFile` variable is replaced with the weave output filename.) |
+| Command to run after tangle                                  | TangleCommand | `go build`                                                   |
+| Symbol to mark code blocks that are extensions of other code blocks | AppendSymbol  | `\,+\kern-2pt`                                               |
 
 Any of these substitutions can be changed by reading a configuration file with lines of the form:
 
@@ -250,6 +251,8 @@ Here is a configuration file that mimics the default options:
 %%glitter TextCodeRef   \glitterCodeRef{$1}
 %%glitter CodeEscapeSub #\glitterHash#
 %%glitter InlineCode    \lstinline@$1@
+%%glitter AppendSymbol  \,+\kern-2pt
+%%glitter CodeSet       \glitterSet{append={$append},blocktable=${blocktable},labelbase={$labelbase},labelnum=$labelnum}
 %%glitter WeaveLineRef  %%line $lineno "$filename"$n
 %%glitter TangleLineRef /*line $filename:$lineno*/
 %%glitter WeaveCommand  pdflatex ${WeaveFile}
