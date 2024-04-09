@@ -23,6 +23,8 @@
 \RequirePackage{url}
 \RequirePackage{tikz}
 \RequirePackage{listings}
+\RequirePackage{hyperref}
+\RequirePackage{tocloft}
 
 \DeclareOption*{\PassOptionsToClass{\CurrentOption}{article}}
 \ProcessOptions\relax
@@ -59,17 +61,39 @@
 %%glitter TextCodeRef   \glitterCodeRef{$1}
 %%glitter CodeEscapeSub #\glitterHash#
 %%glitter InlineCode    \lstinline@$1@
+%%glitter AppendSymbol  \,+\kern-2pt
+
+%%glitter CodeSet \glitterSet{append={$append},blocktable=${blocktable},labelbase={$labelbase},labelnum=$labelnum}
 
 %%glitter WeaveLineRef  %%line $lineno "$filename"$n
 %%glitter TangleLineRef /*line $filename:$lineno*/
 %%glitter WeaveCommand  pdflatex ${WeaveFile}
 %%glitter TangleCommand go build
+\newlistof{block}{blk}{List of Key Blocks}
+
+\global\def\glitterTrue{true}
+
+\global\def\glitterAppendSymbol{}
+\global\def\glitterBlockTable{false}
+\global\def\glitterLabelBase{glitter:}
+\global\def\glitterLabelNum{0}
+
+\makeatletter
+\define@key{glitterkeys}{append}[+]{\global\def\glitterAppendSymbol{#1}}
+\define@key{glitterkeys}{blocktable}[true]{\global\def\glitterBlockTable{#1}}
+\define@key{glitterkeys}{labelbase}{\global\def\glitterLabelBase{#1}}
+\define@key{glitterkeys}{labelnum}{\global\def\glitterLabelNum{#1}}
+\makeatother
+
+\newcommand\glitterSet[1]{\setkeys{glitterkeys}{#1}}
 
 \newcommand\glitterStartBook{\begin{document}}
-\newcommand\glitterEndBook{\end{document}}
+\newcommand\glitterEndBook{\clearpage\listofblock\end{document}}
 \newcommand\glitterStartText{\par}
 \newcommand\glitterEndText{\par}
 \newcommand\glitterCodeRef[1]{\ensuremath{\langle\kern-2pt\langle\textrm{#1}\rangle\kern-2pt\rangle}}
-\newcommand\glitterStartCode[1]{\par\noindent\hbox{$\glitterCodeRef{#1}\equiv$}}
-\newcommand\glitterEndCode{}
+\newcommand\glitterStartCode[1]{\refstepcounter{block}%
+    \par\noindent\hbox{$\glitterCodeRef{#1}\glitterAppendSymbol\equiv$}%
+    \ifx\glitterTrue\glitterBlockTable\addcontentsline{blk}{block}{\protect\numberline{\theblock}#1}\fi}
+\newcommand\glitterEndCode{\glitterSet{append={},blocktable=false,labelnum=0}}
 \newcommand\glitterHash{\texttt{\char35}}

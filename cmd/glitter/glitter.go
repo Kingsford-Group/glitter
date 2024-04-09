@@ -68,6 +68,8 @@ func NewGlitterOptions() GlitterOptions {
 			"TextCodeRef":   `\glitterCodeRef{$1}`,
 			"CodeEscapeSub": `#\glitterHash#`,
 			"InlineCode":    `\lstinline@$1@`,
+			"AppendSymbol":  `\,+\kern-2pt`,
+			"CodeSet":       `\glitterSet{append={$append},blocktable=${blocktable},labelbase={$labelbase},labelnum=$labelnum}`,
 
 			"WeaveLineRef":  `%%line $lineno "$filename"$n`,
 			"TangleLineRef": `/*line $filename:$lineno*/`,
@@ -202,6 +204,7 @@ var (
 	weaveConfigRegex = regexp.MustCompile(`^%%glitter\s+(\S+)\s+(.*)$`)
 )
 
+// errorRecursionTooDeep is thrown if we encounter too many @includes.
 var errorRecursionTooDeep = fmt.Errorf("include recursion depth exceeds maximum")
 
 // Void is an empty struct.
@@ -398,7 +401,7 @@ const (
 )
 
 // endBlock writes out the command to end the block according to the state.
-func weaveEndBlock(state int, block Block, out *bufio.Writer) error {
+func weaveEndBlock(state int, important bool, block Block, out *bufio.Writer) (bool, error) {
 	var err error
 	switch state {
 	case InCode:
@@ -408,10 +411,11 @@ func weaveEndBlock(state int, block Block, out *bufio.Writer) error {
 			out.WriteString("\n")
 		}
 		_, err = out.WriteString(Options.GetWeaveConfig("EndCode"))
+		important = false
 	case InText:
 		_, err = out.WriteString(Options.GetWeaveConfig("EndText"))
 	}
-	return err
+	return important, err
 }
 
 // removeTextStart removes the text start code from the line.
@@ -480,6 +484,57 @@ func processWeaveLine(line string, state int) string {
 	return replaceEscapes(weaveInlineCode(weaveCodeRefs(line, state)))
 }
 
+// WeaveBlockInfo stores information about a code block while weaving.
+type WeaveBlockInfo struct {
+	count int
+}
+
+// writeCodeBlockOptions writes the command that sets up the following code block.
+func writeCodeBlockOptions(
+	w *bufio.Writer,
+	blockName string,
+	important bool,
+	seen map[string]WeaveBlockInfo) error {
+
+	blockName = canonicalCodeName(blockName)
+
+	appendSymbol := ""
+	labelNum := 0
+	labelBase := "glitter:"
+	importantStr := "false"
+	if important {
+		importantStr = "true"
+	}
+	if info, ok := seen[blockName]; ok {
+		appendSymbol = Options.GetWeaveConfig("AppendSymbol")
+		info.count++
+		seen[blockName] = info
+		labelNum = seen[blockName].count
+	} else {
+		seen[blockName] = WeaveBlockInfo{
+			count: 0,
+		}
+	}
+	setcmd := os.Expand(Options.GetWeaveConfig("CodeSet"),
+		func(s string) string {
+			switch s {
+			case "append":
+				return appendSymbol
+			case "blocktable":
+				return importantStr
+			case "labelbase":
+				return labelBase
+			case "labelnum":
+				return strconv.Itoa(labelNum)
+			default:
+				return s
+			}
+		},
+	)
+	_, err := w.WriteString(setcmd)
+	return err
+}
+
 // Weave creates a typesetable stream, writing it to out.
 func Weave(filenames []string, out io.Writer) error {
 	w := bufio.NewWriter(out)
@@ -489,9 +544,13 @@ func Weave(filenames []string, out io.Writer) error {
 	w.WriteString("\n")
 
 	isHiding := false
+	important := false
 	state := Start
 	currentFilename := ""
 	var block Block
+	seenBlocks := make(map[string]WeaveBlockInfo)
+
+	var err error
 	// for every source line
 	scanner := NewGlitterScanner(filenames)
 	for l := range scanner.Lines() {
@@ -513,13 +572,16 @@ func Weave(filenames []string, out io.Writer) error {
 				w.WriteString(Options.GetWeaveConfig("StartBook"))
 				w.WriteString("\n")
 			}
-			err := weaveEndBlock(state, block, w)
+			important, err = weaveEndBlock(state, important, block, w)
 			if err != nil {
 				return err
 			}
 			w.WriteString(Options.GetWeaveConfig("StartText"))
 			w.WriteString(processWeaveLine(removeTextStart(l.Line()), state))
 			w.WriteString("\n")
+			if len(arg) > 1 {
+				important = true
+			}
 			state = InText
 
 		// if we're starting a code block
@@ -528,10 +590,11 @@ func Weave(filenames []string, out io.Writer) error {
 				w.WriteString(Options.GetWeaveConfig("StartBook"))
 				w.WriteString("\n")
 			}
-			err := weaveEndBlock(state, block, w)
+			important, err = weaveEndBlock(state, important, block, w)
 			if err != nil {
 				return err
 			}
+			writeCodeBlockOptions(w, arg, important, seenBlocks)
 			w.WriteString(fmt.Sprintf(Options.GetWeaveConfig("StartCode"), arg))
 			w.WriteString("\n")
 			InfoWithFile(2, scanner.CurrentFilePos(), "At code block `%s`", arg)
@@ -567,11 +630,10 @@ func Weave(filenames []string, out io.Writer) error {
 		}
 	}
 
-	var err error
 	if err = scanner.Err(); err != nil {
 		log.Println(err)
 	} else {
-		err = weaveEndBlock(state, block, w)
+		important, err = weaveEndBlock(state, important, block, w)
 		w.WriteString("\n")
 		w.WriteString(Options.GetWeaveConfig("EndBook"))
 		w.WriteString("\n")
@@ -652,7 +714,7 @@ func trimQuotes(s string) string {
 	return s
 }
 
-// removeBlankLines removes blank lines from the start and end of the block
+// removeBlankLines removes blank lines from the start and end of the block.
 func removeBlankLines(block Block) Block {
 	var first, last int
 	for first = range block.lines {
@@ -735,6 +797,8 @@ func tangleReadBlocks(filenames []string) (map[string]Block, error) {
 
 	finalizeBlock := func() {
 		if currentBlock != nil {
+			// BUG: we should only deindent at the end, so that we have a full
+			// picture of the indenting.
 			blocks[codeName] = removeBlankLines(deindentBlock(*currentBlock))
 			codeName = ""
 			currentBlock = nil

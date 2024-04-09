@@ -12,7 +12,7 @@ We give the syntax using regular expressions.
 
 ## Blocks
 
-A **text block** starts with `^\s*@:+`. Everything following the final `:` is placed into the natural language file, in the order they appear in the file. The number of `:` characters doesn’t affect anything, so long as there is one. This allows regions of the file to be separated like so:
+A **text block** starts with `^\s*@:+`. Everything following the final `:` is placed into the natural language file, in the order they appear in the file. This allows regions of the file to be separated like so:
 
 ```
 @: This is a text block
@@ -23,7 +23,7 @@ This is a text block that happens to start with a LaTeX command
 to start a new section.
 ```
 
-
+If there is > 1 `:` character, the next code block is added to the list of “important” code blocks that (by default) appears at the end of the file.
 
 A **code block** starts with a line of the form `^\s*<<.+>>=\s*$`.  The string between  `<<`…`>>` is `S`. Leading and trailing whitespace is removed from `S`. If `S` is of the form `\*\s*"f"\s+n`, where `f` is a string in double quotes and `n` is an integer, then this is a top-level block that will be written to file `f` in order given by `n`. If `n` is omitted, it is assumed to be 0. If `f` is omitted, it is the last `f` that occurred in some code block name. If `S` is any other form, it defines a named code block.
 
@@ -138,6 +138,8 @@ Comments of the form `%line N “file”` are included whenever the file switche
 
 Any lines before the first block encountered in a run are output between the command that starts the file (`Start` below) and the command that starts the content (`StartBook` below), only replacing `@‘` escapes. This means that lines before the first block encountered are added to the LaTeX preamble (assuming you are using LaTeX).
 
+If a block is being appended to an already defined block, it is preceded by a `+≡` symbol.
+
 Unless you give the `-dont-build` option, the output of weave will be run through `pdflatex` (or whatever command is given by the `WeaveCommand` configuration option).
 
 ### Tangling
@@ -201,7 +203,7 @@ Unless you give the `-dont-build`, following the tangle, the command given by th
 
 ## Configuration Files
 
-By default, the output of weave is a text file that uses the LaTeX class `glittertex`. If you are happy with this, there is nothing you need to change. You can typeset the file using `pdflatex foo.tex` (or it will be typeset automatically if you don’t get `-dont-build`). But much of this output can be customized.
+By default, the output of weave is a text file that uses the LaTeX class `glittertex`. If you are happy with this, there is nothing you need to change. You can typeset the file using `pdflatex foo.tex` (or it will be typeset automatically if you don’t use `-dont-build`). But much of this output can be customized.
 
 The default substitutions and options are given in the table below. The `\glitter…` commands are defined in the `glittertex` LaTeX class.
 
@@ -209,6 +211,7 @@ The default substitutions and options are given in the table below. The `\glitte
 | --------------------------------------- | ------------- | ------------------------------------------------------------ |
 | `@:`                                    | StartText     | `\glitterStartText`                                          |
 | end of `@:` block                       | EndText       | `\glitterEndText$n`                                          |
+| before `StartCode`                      | CodeSet       | `\glitterSet{append={$append},blocktable=${blocktable},labelbase={$labelbase},labelnum=$labelnum}` This sets options for the next code block. |
 | `<<code block name>>=`                  | StartCode     | `\glitterStartCode{$1}$n\begin{lstlisting}`                  |
 | end of `<<…>>=` code block              | EndCode       | `\end{lstlisting}\glitterEndCode$n`                          |
 | `<< … >>` in code block                 | CodeCodeRef   | `#\glitterCodeRef{$1}#`                                      |
@@ -273,13 +276,17 @@ This is a work in progress. Commits may not compile, and currently it is just ba
 
 Things to do:
 
-1. Typeset += for blocks that are concatenated to other blocks
-2. Output `/*line file:n*/` comments in tangle
-3. Indexing, primarily the ability to index terms appearing in code blocks. Perhaps use `@` to label a word for indexing? Or figure out a way to use go ast to find terms.
-4. Cross-referencing (i.e. “code is used in …” or forward page references. Ideally leveraging LaTeX’s facilities.)
-5. Table of important blocks (Codeblocks that follow @≡ ?)
-6. Options to handle some go-specific things:
+1. Output `/*line file:n*/` comments in tangle
+2. Indexing, primarily the ability to index terms appearing in code blocks. Perhaps use `@` to label a word for indexing? Or figure out a way to use go ast to find terms.
+3. Cross-referencing (i.e. “code is used in …” or forward page references. Ideally leveraging LaTeX’s facilities.)
+4. Options to handle some go-specific things:
    1. automatic insertion of `package` statements? [Might not be worth it.]
    2. conversion of text blocks to documentation comments, or `doc.go` files?
-7. Support for partial code references a la CWEB `<<A long block name is…>>` [May add too much uncertainty and room for errors.]
-8. Performance enhancements? For example, memoizing the substituted blocks (rather than re-expanding on every use)
+5. Support for partial code references a la CWEB `<<A long block name is…>>` [May add too much uncertainty and room for errors.]
+6. Performance enhancements? For example, memoizing the substituted blocks (rather than re-expanding on every use)
+
+
+
+<<Code block name>>+≡     ▴page ▾page
+
+\label{glXXX:n}
