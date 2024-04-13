@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"cmp"
 	"container/list"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -44,15 +45,17 @@ type GlitterOptions struct {
 	DisallowMultipleIncludes bool
 	DontBuild                bool
 	ConfigFilename           string
-	WeaveConfig              map[string]string
-	WeaveCommand             string
-	TangleCommand            string
+	Config                   map[string]string
 }
 
 // NewGlitterOptions returns a new options struct with the defaults.
 func NewGlitterOptions() GlitterOptions {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "sh"
+	}
 	return GlitterOptions{
-		WeaveConfig: map[string]string{
+		Config: map[string]string{
 			"Start":     `\documentclass{glittertex}`,
 			"StartBock": `\glitterStartBook`,
 			"EndBook":   `\glitterEndBook`,
@@ -63,25 +66,25 @@ func NewGlitterOptions() GlitterOptions {
 			// command on a LaTeX line.
 			"StartCode":     `\glitterStartCode{$1}$n\begin{lstlisting}`,
 			"EndCode":       `\end{lstlisting}\glitterEndCode$n`,
-			"CodeEscape":    `#`,
-			"CodeCodeRef":   `#\glitterCodeRef{$1}#`,
+			"CodeEscape":    `@`,
+			"CodeCodeRef":   `@\glitterCodeRef{$1}@`,
 			"TextCodeRef":   `\glitterCodeRef{$1}`,
-			"CodeEscapeSub": `#\glitterHash#`,
+			"EscapeSub":     `{\glitterHash}`,
 			"InlineCode":    `\lstinline@$1@`,
 			"AppendSymbol":  `\,+\kern-2pt`,
-			"CodeSet":       `\glitterSet{append={$append},blocktable=${blocktable},labelbase={$labelbase},labelnum=$labelnum}`,
-
+			"CodeSet":       `\glitterSet{append={$append},blocktable=$blocktable,blockid=$blockid,blockseries=$blockseries}`,
 			"WeaveLineRef":  `%%line $lineno "$filename"$n`,
 			"TangleLineRef": `/*line $filename:$lineno*/`,
+			"Shell":         shell,
+			"WeaveCommand":  `pdflatex "${weavefile}" && pdflatex "${weavefile}"`,
+			"TangleCommand": `go build`,
 		},
-		WeaveCommand:  `pdflatex ${WeaveFile}`,
-		TangleCommand: `go build`,
 	}
 }
 
-// ReadWeaveConfig reads a file with the weave configure options. It also sets
+// ReadConfig reads a file with the weave configure options. It also sets
 // the defaults.
-func (o *GlitterOptions) ReadWeaveConfig(filename string) error {
+func (o *GlitterOptions) ReadConfig(filename string) error {
 	if len(filename) == 0 {
 		return nil
 	}
@@ -97,23 +100,21 @@ func (o *GlitterOptions) ReadWeaveConfig(filename string) error {
 		if subs != nil {
 			option := strings.TrimSpace(subs[1])
 			value := strings.TrimSpace(subs[2])
-			switch option {
-			case "WeaveCommand":
-				o.WeaveCommand = value
-			case "TangleCommand":
-				o.TangleCommand = value
-			default:
-				o.WeaveConfig[option] = strings.ReplaceAll(value, "$n", "\n")
-			}
+			o.Config[option] = strings.ReplaceAll(value, "$n", "\n")
 		}
 	}
-	o.WeaveConfig["StartCode"] = strings.Replace(o.WeaveConfig["StartCode"], "$1", "%s", 1)
+	o.Config["StartCode"] = strings.Replace(o.Config["StartCode"], "$1", "%s", 1)
+	//if utf8.RuneCountInString(o.Config["CodeEscape"]) != 1 {
+	//    return fmt.Errorf("CodeEscape configuration option must be a single character; got `%s`",
+	//        o.Config["CodeEscape"],
+	//    )
+	//}
 	return scanner.Err()
 }
 
-// GetWeaveConfig returns the value of the configuration option given by name.
-func (o *GlitterOptions) GetWeaveConfig(name string) string {
-	return o.WeaveConfig[name]
+// GetConfig returns the value of the configuration option given by name.
+func (o *GlitterOptions) GetConfig(name string) string {
+	return o.Config[name]
 }
 
 // Options is a global variable describing how to operation.
@@ -176,6 +177,13 @@ func (b *Block) AppendLine(ll SourceLine) {
 	b.lines = append(b.lines, ll)
 }
 
+// appendBlocks appends b2 to b1 and returns the new block.
+func appendBlocks(b1, b2 Block) Block {
+    return Block{
+        lines: append(b1.lines, b2.lines...),
+    }
+}
+
 var (
 	// includeRegex matches an include line
 	includeRegex = regexp.MustCompile(`^\s*@include\s+"(.+)"\s*$`)
@@ -205,7 +213,7 @@ var (
 )
 
 // errorRecursionTooDeep is thrown if we encounter too many @includes.
-var errorRecursionTooDeep = fmt.Errorf("include recursion depth exceeds maximum")
+var errorRecursionTooDeep = errors.New("include recursion depth exceeds maximum")
 
 // Void is an empty struct.
 type Void struct{}
@@ -400,22 +408,22 @@ const (
 	InText
 )
 
-// endBlock writes out the command to end the block according to the state.
-func weaveEndBlock(state int, important bool, block Block, out *bufio.Writer) (bool, error) {
-	var err error
-	switch state {
-	case InCode:
-		block = removeBlankLines(deindentBlock(block))
-		for _, line := range block.lines {
-			out.WriteString(line.Line())
-			out.WriteString("\n")
-		}
-		_, err = out.WriteString(Options.GetWeaveConfig("EndCode"))
-		important = false
-	case InText:
-		_, err = out.WriteString(Options.GetWeaveConfig("EndText"))
-	}
-	return important, err
+// WeaveBlockInfo stores information about a code block while weaving.
+type WeaveBlockInfo struct {
+	count         int
+	firstBlockNum int
+    firstMention  FilePos
+    referencedFrom map[int]Void
+}
+
+// writeStrings writes a set of strings.
+func writeStrings(w *bufio.Writer, a ...string) error {
+    for _, s := range a {
+        if _, err := w.WriteString(s); err != nil {
+            return err
+        }
+    } 
+    return nil
 }
 
 // removeTextStart removes the text start code from the line.
@@ -425,7 +433,7 @@ func removeTextStart(line string) string {
 
 // weaveCodeRefs replaces a <<foo>> in a line with a call to format the code
 // ref.
-func weaveCodeRefs(line string, state int) string {
+func weaveCodeRefs(line string, state, callingBlockId int, blocks map[string]WeaveBlockInfo) string {
 	// We handle lstlisting's tex escape character. That package will let us
 	// use latex in a code block, but we have to choose a character that means
 	// start and end the tex region. E.g. #\glitterCodeRef{foo}#. But we need a
@@ -436,21 +444,69 @@ func weaveCodeRefs(line string, state int) string {
 	// latex command with # #, and replace any real # characters with the
 	// #\glitterHash# macro, which is defined to be \texttt{\char35}.
 
+    replacement := Options.GetConfig("TextCodeRef")
 	if state == InCode {
+		// first replace all the @ inside of << >> code references with EscapeSub
+		line = escapeCodeEscapes(line)
+		// then replace all remaining @ with @EscapeSub@
+		esc := Options.GetConfig("CodeEscape")
 		line = strings.ReplaceAll(line,
-			Options.GetWeaveConfig("CodeEscape"),
-			Options.GetWeaveConfig("CodeEscapeSub"),
+			esc,
+			esc+Options.GetConfig("EscapeSub")+esc,
 		)
-		// BUG: what if the code name has a # in it? Need to replace # inside the code
-		// names with \glitterHash without the surrounding # #
-		return codeRefRegex.ReplaceAllString(line, Options.GetWeaveConfig("CodeCodeRef"))
+        replacement = Options.GetConfig("CodeCodeRef")
 	}
-	return codeRefRegex.ReplaceAllString(line, Options.GetWeaveConfig("TextCodeRef"))
+
+    return codeRefRegex.ReplaceAllStringFunc(line, func(n string) string {
+        subs := codeRefRegex.FindStringSubmatch(n)
+        nn := canonicalCodeName(subs[1])
+        blocknum := -1
+        if info, ok := blocks[nn]; ok {
+            blocknum = info.firstBlockNum
+            if callingBlockId >= 0 {
+                blocks[nn].referencedFrom[callingBlockId] = Void{}
+            }
+        }
+        return os.Expand(replacement, func(s string) string {
+            switch s {
+            case "blockid":
+                if blocknum < 0 {
+                    return "??"
+                } else {
+                    return strconv.Itoa(blocknum)
+                }
+            case "name":
+                return subs[1]
+            }
+            return s
+        })
+    })
+}
+
+// escapeCodeEscapes replaces in line every CodeEscape with EscapeSub in each
+// << .. >> code references.
+func escapeCodeEscapes(line string) string {
+	matches := codeRefRegex.FindAllStringSubmatchIndex(line, -1)
+
+    escapeSub := Options.GetConfig("EscapeSub")
+	escapeChar := Options.GetConfig("CodeEscape")
+
+	out := make([]string, 0)
+	cp := 0
+	for _, m := range matches {
+		out = append(out, line[cp:m[0]])
+		out = append(out, strings.ReplaceAll(line[m[0]:m[1]], escapeChar, escapeSub))
+		cp = m[1]
+	}
+	if cp < len(line) {
+		out = append(out, line[cp:])
+	}
+	return strings.Join(out, "")
 }
 
 // weaveInlineCode replaces [[ ... ]] with the appropriate latex.
 func weaveInlineCode(line string) string {
-	return inlineCodeRegex.ReplaceAllString(line, Options.GetWeaveConfig("InlineCode"))
+    return inlineCodeRegex.ReplaceAllString(line, Options.GetConfig("InlineCode"))
 }
 
 // replaceEscapes substitutes the escape sequence @'x with x.
@@ -463,9 +519,9 @@ func lineCommand(pos FilePos) string {
 	var tt string
 	switch Options.Command {
 	case "weave":
-		tt = Options.GetWeaveConfig("WeaveLineRef")
+		tt = Options.GetConfig("WeaveLineRef")
 	case "tangle":
-		tt = Options.GetWeaveConfig("TangleLineRef")
+		tt = Options.GetConfig("TangleLineRef")
 	}
 	return os.Expand(tt, func(s string) string {
 		switch s {
@@ -479,16 +535,6 @@ func lineCommand(pos FilePos) string {
 	})
 }
 
-// processWeaveLine makes a text line to be ready to output.
-func processWeaveLine(line string, state int) string {
-	return replaceEscapes(weaveInlineCode(weaveCodeRefs(line, state)))
-}
-
-// WeaveBlockInfo stores information about a code block while weaving.
-type WeaveBlockInfo struct {
-	count int
-}
-
 // writeCodeBlockOptions writes the command that sets up the following code block.
 func writeCodeBlockOptions(
 	w *bufio.Writer,
@@ -499,33 +545,42 @@ func writeCodeBlockOptions(
 	blockName = canonicalCodeName(blockName)
 
 	appendSymbol := ""
+	// Every code block is given a number in increasing (but not necessarily
+	// consequtive) order. Blocks with the same name are given the same number.
 	labelNum := 0
-	labelBase := "glitter:"
+	// For blocks with the same labelNum, labelSeries counts up by 1 for every
+	// instance.
+	labelSeries := 0
 	importantStr := "false"
 	if important {
 		importantStr = "true"
 	}
+	// if we have already seen this block, get the number, and increment
+	// the count.
 	if info, ok := seen[blockName]; ok {
-		appendSymbol = Options.GetWeaveConfig("AppendSymbol")
+        if info.count > 0 {
+            appendSymbol = Options.GetConfig("AppendSymbol")
+        }
 		info.count++
 		seen[blockName] = info
-		labelNum = seen[blockName].count
+		labelNum = info.firstBlockNum
+		labelSeries = seen[blockName].count
 	} else {
-		seen[blockName] = WeaveBlockInfo{
-			count: 0,
-		}
+        // since we assume that all the blocks are there, we shouldn't ever get
+        // here
+        return fmt.Errorf("internally missing block `%s`")
 	}
-	setcmd := os.Expand(Options.GetWeaveConfig("CodeSet"),
+	setcmd := os.Expand(Options.GetConfig("CodeSet"),
 		func(s string) string {
 			switch s {
 			case "append":
 				return appendSymbol
 			case "blocktable":
 				return importantStr
-			case "labelbase":
-				return labelBase
-			case "labelnum":
+			case "blockid":
 				return strconv.Itoa(labelNum)
+			case "blockseries":
+				return strconv.Itoa(labelSeries - 1)
 			default:
 				return s
 			}
@@ -535,13 +590,49 @@ func writeCodeBlockOptions(
 	return err
 }
 
+// weaveEndBlock writes out the command to end the block according to the state.
+func weaveEndBlock(state int, important *bool, block Block, out *bufio.Writer) error {
+	var err error
+	switch state {
+	case InCode:
+		block = removeBlankLines(deindentBlock(block))
+		for _, line := range block.lines {
+            err = writeStrings(out, line.Line(), "\n")
+            if err != nil {
+                return err
+            }
+		}
+		_, err = out.WriteString(Options.GetConfig("EndCode"))
+		*important = false
+	case InText:
+		_, err = out.WriteString(Options.GetConfig("EndText"))
+	}
+	return err
+}
+
+
+// registerBlockRefs registers any previously unseen code refs.
+func registerBlockRefs(seenBlocks map[string]WeaveBlockInfo, blockId *int, line string, pos FilePos) {
+    for _, r := range codeRefRegex.FindAllStringSubmatch(line, -1) {
+        name := canonicalCodeName(r[1])
+        if _, ok := seenBlocks[name]; !ok {
+            *blockId++
+            seenBlocks[name] = WeaveBlockInfo{
+                count: 0, 
+                firstBlockNum: *blockId,
+                firstMention: pos,
+                referencedFrom: make(map[int]Void),
+            }
+        }
+    }
+}
+
 // Weave creates a typesetable stream, writing it to out.
 func Weave(filenames []string, out io.Writer) error {
 	w := bufio.NewWriter(out)
 	defer w.Flush()
 
-	w.WriteString(Options.GetWeaveConfig("Start"))
-	w.WriteString("\n")
+    writeStrings(w, Options.GetConfig("Start"), "\n")
 
 	isHiding := false
 	important := false
@@ -549,8 +640,25 @@ func Weave(filenames []string, out io.Writer) error {
 	currentFilename := ""
 	var block Block
 	seenBlocks := make(map[string]WeaveBlockInfo)
+    blockId := 0
+    currentBlockId := -1
 
 	var err error
+
+    // checkFirstBlock writes the start event if this is the first block.
+    checkFirstBlock := func() error {
+        if state == Start {
+            return writeStrings(w, Options.GetConfig("StartBook"), "\n")
+        }
+        return nil
+    }
+
+    // processWeaveLine makes a text line to be ready to output.
+    processWeaveLine := func (line string, pos FilePos) string {
+        registerBlockRefs(seenBlocks, &blockId, line, pos)
+        return replaceEscapes(weaveInlineCode(weaveCodeRefs(line, state, currentBlockId, seenBlocks)))
+    }
+
 	// for every source line
 	scanner := NewGlitterScanner(filenames)
 	for l := range scanner.Lines() {
@@ -568,38 +676,57 @@ func Weave(filenames []string, out io.Writer) error {
 
 		// if we're starting a text block
 		case TextStartLine:
-			if state == Start {
-				w.WriteString(Options.GetWeaveConfig("StartBook"))
-				w.WriteString("\n")
-			}
-			important, err = weaveEndBlock(state, important, block, w)
+            err = checkFirstBlock()
+            if err != nil {
+                return err
+            }
+			err = weaveEndBlock(state, &important, block, w)
 			if err != nil {
 				return err
 			}
-			w.WriteString(Options.GetWeaveConfig("StartText"))
-			w.WriteString(processWeaveLine(removeTextStart(l.Line()), state))
-			w.WriteString("\n")
+            currentBlockId = -1
+			state = InText
+            line := removeTextStart(l.Line())
+            err = writeStrings(w, 
+                lineCommand(l.Pos()),
+                Options.GetConfig("StartText"),
+                processWeaveLine(line, l.Pos()),
+                "\n",
+            )
 			if len(arg) > 1 {
 				important = true
 			}
-			state = InText
 
 		// if we're starting a code block
 		case CodeStartLine:
-			if state == Start {
-				w.WriteString(Options.GetWeaveConfig("StartBook"))
-				w.WriteString("\n")
-			}
-			important, err = weaveEndBlock(state, important, block, w)
+            err = checkFirstBlock()
+            if err != nil {
+                return err
+            }
+			err = weaveEndBlock(state, &important, block, w)
 			if err != nil {
 				return err
 			}
-			writeCodeBlockOptions(w, arg, important, seenBlocks)
-			w.WriteString(fmt.Sprintf(Options.GetWeaveConfig("StartCode"), arg))
-			w.WriteString("\n")
+			state = InCode
+            // uses a bit of a trick given that our code ref syntax << .. >> is compatable
+            // with our code def syntaxt << .. >>= so we can use the same registerBlockRefs
+            // to create a new record for this new block.
+            registerBlockRefs(seenBlocks, &blockId, l.Line(), l.Pos())
+            if b, ok := seenBlocks[canonicalCodeName(arg)]; ok {
+                currentBlockId = b.firstBlockNum
+            }
+			err = writeCodeBlockOptions(w, arg, important, seenBlocks)
+			if err != nil {
+				return err
+			}
+            err = writeStrings(w, 
+                "\n", 
+                lineCommand(l.Pos()), 
+                fmt.Sprintf(Options.GetConfig("StartCode"), arg), 
+                "\n",
+            ) 
 			InfoWithFile(2, scanner.CurrentFilePos(), "At code block `%s`", arg)
 			block = Block{}
-			state = InCode
 
 		case GlitterLine:
 			if lineHasGlitterProp(l.Line(), "hide") {
@@ -613,18 +740,22 @@ func Weave(filenames []string, out io.Writer) error {
 			// if we're in the start state, we send lines out with minimal
 			// processing.
 			if state == Start {
-				w.WriteString(replaceEscapes(l.Line()))
-				w.WriteString("\n")
+                err = writeStrings(w, replaceEscapes(l.Line()), "\n")
+                if err != nil {
+                    return err
+                }
 			} else {
 				// otherwise, we do all the translations.
-				l.line = processWeaveLine(l.Line(), state)
+				l.line = processWeaveLine(l.Line(), l.Pos())
 				// if we're in a code block, we save the lines for the future.
 				if state == InCode {
 					block.AppendLine(*l)
 				} else {
 					// otherwise, we just write it out.
-					w.WriteString(l.Line())
-					w.WriteString("\n")
+                    err = writeStrings(w, l.Line(), "\n")
+                    if err != nil {
+                        return err
+                    }
 				}
 			}
 		}
@@ -633,12 +764,25 @@ func Weave(filenames []string, out io.Writer) error {
 	if err = scanner.Err(); err != nil {
 		log.Println(err)
 	} else {
-		important, err = weaveEndBlock(state, important, block, w)
-		w.WriteString("\n")
-		w.WriteString(Options.GetWeaveConfig("EndBook"))
-		w.WriteString("\n")
+		err = weaveEndBlock(state, &important, block, w)
+        if err != nil {
+            return err
+        }
+        err = writeStrings(w, "\n", Options.GetConfig("EndBook"), "\n")
 	}
+    if err == nil {
+        printUndefinedBlocks(seenBlocks)
+    }
 	return err
+}
+
+// printUndefinedBlocks prints the undefined blocks.
+func printUndefinedBlocks(seenBlocks map[string]WeaveBlockInfo) {
+    for name, b := range seenBlocks {
+        if b.count == 0 {
+            InfoWithFile(0, &b.firstMention, "Error: undefined block (#%d): `%s`", b.firstBlockNum, name) 
+        }
+    }
 }
 
 //=================================================================================
@@ -787,6 +931,15 @@ func createOutputFilename(name string) string {
 	return name + TANGLE_OUT_EXT
 }
 
+// prependLineNumber returns a block with the line number of the first line
+// prepended.
+func prependLineNumber(b Block) Block {
+    if len(b.lines) > 0 {
+        b.lines[0].line = lineCommand(b.lines[0].Pos()) + b.lines[0].Line()
+    }
+    return b
+}
+
 // tangleReadBlocks reads all of the given files, recursively including
 // @include files and returns a map from code block name to slices of lines.
 func tangleReadBlocks(filenames []string) (map[string]Block, error) {
@@ -797,9 +950,12 @@ func tangleReadBlocks(filenames []string) (map[string]Block, error) {
 
 	finalizeBlock := func() {
 		if currentBlock != nil {
-			// BUG: we should only deindent at the end, so that we have a full
-			// picture of the indenting.
-			blocks[codeName] = removeBlankLines(deindentBlock(*currentBlock))
+            b2 := removeBlankLines(deindentBlock(*currentBlock)) 
+            b1, ok := blocks[codeName]
+            if ok {
+                b2 = prependLineNumber(b2)
+            }
+			blocks[codeName] = appendBlocks(b1, b2)
 			codeName = ""
 			currentBlock = nil
 		}
@@ -833,7 +989,7 @@ func tangleReadBlocks(filenames []string) (map[string]Block, error) {
 				filename, order, ok := parseTopLevelName(codeName, currentFilename)
 				if !ok {
 					return nil, ErrorWithFile(
-						scanner.CurrentFilePos(),
+						*scanner.CurrentFilePos(),
 						"badly formated top-level name `%s`",
 						codeName,
 					)
@@ -849,8 +1005,8 @@ func tangleReadBlocks(filenames []string) (map[string]Block, error) {
 			InfoWithFile(2, scanner.CurrentFilePos(), "At code block `%s`", codeName)
 
 			// get the block if it already exists
-			tmp := blocks[codeName]
-			currentBlock = &tmp
+			//tmp := blocks[codeName]
+			currentBlock = &Block{}
 
 		case GlitterLine:
 			defaultFilename = createOutputFilename(l.Pos().filename)
@@ -922,10 +1078,7 @@ func expandLine(blocks map[string]Block, line string, loc FilePos) (*list.List, 
 	blockName := canonicalCodeName(strings.TrimSpace(line[pos[2]:pos[3]]))
 
 	if isTopLevelName(blockName) {
-		return nil, fmt.Errorf("%s:%d: cannot reference top-level block `%s`",
-			loc.Filename(),
-			loc.LineNo(),
-			blockName)
+		return nil, ErrorWithFile(loc, "cannot reference top-level block `%s`", blockName)
 	}
 
 	before := line[:startRef]
@@ -934,10 +1087,7 @@ func expandLine(blocks map[string]Block, line string, loc FilePos) (*list.List, 
 
 	refdBlock, ok := blocks[blockName]
 	if !ok {
-		return nil, fmt.Errorf("%s:%d: unknown block reference `%s`",
-			loc.Filename(),
-			loc.LineNo(),
-			blockName)
+		return nil, ErrorWithFile(loc, "unknown block reference `%s`", blockName)
 	}
 
 	// if the referenced block is empty, it becomes a single space
@@ -953,7 +1103,7 @@ func expandLine(blocks map[string]Block, line string, loc FilePos) (*list.List, 
 		for i, refline := range refdBlock.lines {
 			line := refline.Line()
 			if i == 0 {
-				line = before + line
+				line = before + lineCommand(refline.Pos()) + line
 			}
 			if i == len(refdBlock.lines)-1 {
 				line = line + after
@@ -974,14 +1124,16 @@ func expandLine(blocks map[string]Block, line string, loc FilePos) (*list.List, 
 // expandAndWriteBlock expands all << >> refs in a code block and writes the
 // block to the given stream.
 func expandAndWriteBlock(b Block, blocks map[string]Block, out *bufio.Writer) error {
+    if len(b.lines) > 0 {
+        out.WriteString(lineCommand(b.lines[0].Pos()))
+    }
 	for _, line := range b.lines {
 		newLine, err := expandLine(blocks, line.Line(), line.Pos())
 		if err != nil {
 			return err
 		}
 		for e := newLine.Front(); e != nil; e = e.Next() {
-			out.WriteString(replaceEscapes(e.Value.(string)))
-			out.WriteString("\n")
+            writeStrings(out, replaceEscapes(e.Value.(string)), "\n")
 		}
 	}
 	return nil
@@ -1001,7 +1153,7 @@ func Tangle(filenames []string) error {
 		return err
 	}
 	if len(topBlocks) == 0 {
-		return fmt.Errorf("no top-level code blocks found")
+		return errors.New("no top-level code blocks found")
 	}
 	Info(2, "%d total top-level blocks found", len(topBlocks))
 
@@ -1164,7 +1316,7 @@ func InfoWithFile(level int, pos *FilePos, msg string, args ...any) {
 }
 
 // ErrorWithFile returns a new error that includes the file position.
-func ErrorWithFile(pos *FilePos, msg string, args ...any) error {
+func ErrorWithFile(pos FilePos, msg string, args ...any) error {
 	return fmt.Errorf(fmt.Sprintf("%s:%d: %s", pos.Filename(), pos.LineNo(), msg), args...)
 }
 
@@ -1182,11 +1334,15 @@ func printUsage() {
 
 // ExecuteCommand executes the given command, after doing some substitutions.
 func ExecuteCommand(cmd string) error {
+	explicitShell := false
 	var err error
 	cmd = os.Expand(cmd, func(s string) string {
 		switch s {
-		case "WeaveFile":
+		case "weavefile":
 			return Options.WeaveOutFilename
+		case "SHELL":
+			explicitShell = true
+			return Options.GetConfig("Shell")
 		default:
 			err = fmt.Errorf("unknown replacement in command: `%s`", s)
 			return ""
@@ -1196,25 +1352,13 @@ func ExecuteCommand(cmd string) error {
 		return err
 	}
 	Info(1, "Running `%s`...", cmd)
-	fields := strings.Fields(cmd)
-	if len(fields) < 1 {
-		return fmt.Errorf("malformed command `%s`", cmd)
+	// if $SHELL was given as in the command string, run it directly.
+	if explicitShell {
+		args := strings.Fields(cmd)
+		return exec.Command(args[0], args[1:]...).Run()
 	}
-	return exec.Command(fields[0], fields[1:]...).Run()
-}
-
-// RunPostProcessing runs the approprite post-processing command.
-func RunPostProcessing() error {
-	if Options.DontBuild {
-		return nil
-	}
-	switch Options.Command {
-	case "weave":
-		return ExecuteCommand(Options.WeaveCommand)
-	case "tangle":
-		return ExecuteCommand(Options.TangleCommand)
-	}
-	return fmt.Errorf("internal error!")
+	// otherwise, use the Shell config option and give it the -c option.
+	return exec.Command(Options.GetConfig("Shell"), "-c", cmd).Run()
 }
 
 // init sets up the command line processing.
@@ -1244,7 +1388,7 @@ func main() {
 	var err error
 	switch Options.Command {
 	case "weave":
-		err = Options.ReadWeaveConfig(Options.ConfigFilename)
+		err = Options.ReadConfig(Options.ConfigFilename)
 		if err != nil {
 			break
 		}
@@ -1254,6 +1398,9 @@ func main() {
 			err = Weave(Options.GivenFiles, f)
 			f.Close()
 		}
+		if err == nil && !Options.DontBuild {
+			err = ExecuteCommand(Options.GetConfig("WeaveCommand"))
+		}
 
 	case "tangle":
 		var files []string
@@ -1261,13 +1408,13 @@ func main() {
 		if err == nil {
 			err = Tangle(files)
 		}
+		if err == nil && !Options.DontBuild {
+			err = ExecuteCommand(Options.GetConfig("TangleCommand"))
+		}
 
 	default:
 		log.Printf("unknown command `%s`\n", Options.Command)
 		os.Exit(1)
-	}
-	if err == nil {
-		err = RunPostProcessing()
 	}
 	if err != nil {
 		log.Println(err)

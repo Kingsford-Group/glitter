@@ -220,11 +220,11 @@ The default substitutions and options are given in the table below. The `\glitte
 | Start of output                                              | Start         | `\documentclass{glittertex}`                                 |
 | Before start of first block                                  | StartBook     | `\glitterStartBook`                                          |
 | End of output                                                | EndBook       | `\glitterEndBook`                                            |
-|                                                              | CodeEscape    | `#`                                                          |
-| CodeEscape in code block                                     | CodeEscapeSub | `#\glitterHash#`                                             |
+|                                                              | CodeEscape    | `@`                                                          |
+| CodeEscape in code block                                     | CodeEscapeSub | `@\glitterHash@`                                             |
 | Marking line and file changes in weave                       | WeaveLineRef  | `%%line $lineno "$filename"$n` (The `lineno` and `filename` variables are replaced with the line number and filename. You can use the syntax `$lineno` or `${lineno}`) |
 | Marking line and file changes in tangle                      | TangleLineRef | `/*line $filename:$lineno*/`                                 |
-| Command to run after weave                                   | WeaveCommand  | `pdflatex ${WeaveFile}` (The `WeaveFile` variable is replaced with the weave output filename.) |
+| Command to run after weave                                   | WeaveCommand  | `pdflatex "${WeaveFile}" && pdflatex "${WeaveFile}"` (The `WeaveFile` variable is replaced with the weave output filename.) |
 | Command to run after tangle                                  | TangleCommand | `go build`                                                   |
 | Symbol to mark code blocks that are extensions of other code blocks | AppendSymbol  | `\,+\kern-2pt`                                               |
 
@@ -246,10 +246,10 @@ Here is a configuration file that mimics the default options:
 %%glitter EndText       \glitterEndText$n
 %%glitter StartCode     \glitterStartCode{$1}$n\begin{lstlisting}
 %%glitter EndCode       \end{lstlisting}\glitterEndCode$n
-%%glitter CodeEscape    #
-%%glitter CodeCodeRef   #\glitterCodeRef{$1}#
+%%glitter CodeEscape    @
+%%glitter CodeCodeRef   @\glitterCodeRef{$1}@
 %%glitter TextCodeRef   \glitterCodeRef{$1}
-%%glitter CodeEscapeSub #\glitterHash#
+%%glitter CodeEscapeSub @\glitterHash@
 %%glitter InlineCode    \lstinline@$1@
 %%glitter AppendSymbol  \,+\kern-2pt
 %%glitter CodeSet       \glitterSet{append={$append},blocktable=${blocktable},labelbase={$labelbase},labelnum=$labelnum}
@@ -269,9 +269,15 @@ glitter -config glittertex.cls weave ...
 
 If you don’t specify the `-config` option, glitter will use its built-in defaults.
 
-The substitution of `#` to `#\glitterHash#` deserves some explanation. In the default templates, the code blocks are typeset using the `listings` LaTeX package. To typeset a code ref inside of listings, we enable escaping to LaTeX with the `#` character. Hence, in a code block, a ref is output as `#\glitterCodeRef{foo}#`. But your code might have a `#` in it (in a comment, or string literal for example). If it does, it is replaced by `#\glitterHash#`, and `\glitterHash` by default is defined to be `\texttt{\char35}`, which is a `#` (using standard font encodings)! This will make the `#` appear, but won’t confuse `listings` with a `#` character.
+The substitution of `@` to `@\glitterHash@` deserves some explanation. In the default templates, the code blocks are typeset using the `listings` LaTeX package. To typeset a code ref inside of listings, we enable escaping to LaTeX with the `@` character. Hence, in a code block, a ref is output as `@\glitterCodeRef{foo}@`. But your code might have a `@` in it (in a comment, or string literal for example). If it does, it is replaced by `@\glitterHash@`, and `\glitterHash` by default is defined to be `\texttt{\char64}`, which is a `@` (using standard font encodings)! This will make the `@` appear, but won’t confuse `listings` with a `@` character.
 
-Note that *you* the author of the glitter file cannot use `#` to escape to latex in a code block. The facility is internal to glitter and customizable so that different substitutions can be made if you are not using LaTex as the typesetting engine.
+Note that *you* the author of the glitter file cannot use `@` to escape to latex in a code block. The facility is internal to glitter and customizable so that different substitutions can be made if you are not using LaTeX as the typesetting engine.
+
+### Labels:
+
+Every code block gets a id number incremented by 1. Code blocks that use the same name as a previous code block reuse the block id as well.  Each code block also gets a “series number”, which is 1 for the first occurrence of a block with a given name, and is incremented for each block with the same name.
+
+A block’s label is `\label{glitter:BLOCKID:SERIES}`.  This way, the doubly linked list of a block’s definition can be found via `\pageref{glitter:BLOCKID:SERIES-1}` and `\pageref{glitter:BLOCKID:SERIES+1}`, (where of course, you have to do the -1 and +1 using LaTeX’s math functions).
 
 # Roadmap
 
@@ -279,16 +285,22 @@ This is a work in progress. Commits may not compile, and currently it is just ba
 
 Things to do:
 
-1. Output `/*line file:n*/` comments in tangle
-2. Indexing, primarily the ability to index terms appearing in code blocks. Perhaps use `@` to label a word for indexing? Or figure out a way to use go ast to find terms.
-3. Cross-referencing (i.e. “code is used in …” or forward page references. Ideally leveraging LaTeX’s facilities.)
-4. Options to handle some go-specific things:
+1. For code defs, add list of pages where they are used?
+2. Unit tests
+
+### Known limitations
+
+1. You cannot have a # occur inside a `[[ ]]` inline code span. so if you want an inline snippet with an `#`, you can’t use `[[ ]]`. You can use, say, `\lstinline!….!`. This is annoying from an elegance perspective, but probably not worth the complexity to change.
+2. You can’t include code refs in an `[[ ]]` inline listing (though you can include code refs directly in text via `<< … >>`)
+
+### Potential ideas for the future
+
+1. Options to handle some go-specific things:
    1. automatic insertion of `package` statements? [Might not be worth it.]
    2. conversion of text blocks to documentation comments, or `doc.go` files?
-5. Support for partial code references a la CWEB `<<A long block name is…>>` [May add too much uncertainty and room for errors.]
-6. Performance enhancements? For example, memoizing the substituted blocks (rather than re-expanding on every use)
-
-
+2. Support for partial code references a la CWEB `<<A long block name is…>>` [May add too much uncertainty and room for errors.]
+3. Performance enhancements? For example, memoizing the substituted blocks (rather than re-expanding on every use)
+4. Indexing, primarily the ability to index terms appearing in code blocks. Perhaps use `@` to label a word for indexing? Or figure out a way to use go ast to find terms.
 
 <<Code block name>>+≡     ▴page ▾page
 
