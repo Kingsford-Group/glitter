@@ -610,7 +610,6 @@ func weaveEndBlock(state int, important *bool, block Block, out *bufio.Writer) e
 	return err
 }
 
-
 // registerBlockRefs registers any previously unseen code refs.
 func registerBlockRefs(seenBlocks map[string]WeaveBlockInfo, blockId *int, line string, pos FilePos) {
     for _, r := range codeRefRegex.FindAllStringSubmatch(line, -1) {
@@ -911,6 +910,15 @@ func deindentBlock(block Block) Block {
 	return block
 }
 
+// prependLineNumber returns a block with the line number of the first line
+// prepended.
+func prependLineNumber(b Block) Block {
+    if len(b.lines) > 0 {
+        b.lines[0].line = lineCommand(b.lines[0].Pos()) + b.lines[0].Line()
+    }
+    return b
+}
+
 // debugPrintBlocks writes all the blocks out in a simple format.
 func debugPrintBlocks(blocks map[string][]string, out io.Writer) {
 	for n, c := range blocks {
@@ -931,14 +939,6 @@ func createOutputFilename(name string) string {
 	return name + TANGLE_OUT_EXT
 }
 
-// prependLineNumber returns a block with the line number of the first line
-// prepended.
-func prependLineNumber(b Block) Block {
-    if len(b.lines) > 0 {
-        b.lines[0].line = lineCommand(b.lines[0].Pos()) + b.lines[0].Line()
-    }
-    return b
-}
 
 // tangleReadBlocks reads all of the given files, recursively including
 // @include files and returns a map from code block name to slices of lines.
@@ -1059,8 +1059,6 @@ func getTopLevelBlocks(blocks map[string]Block) (out []string, err error) {
 	})
 	return
 }
-
-// TODO: add /*line file:N*/ comments to the output of tangle
 
 // expandLine will recursively substitute << >> references, trying to maintain
 // correct line breaks and indentation.

@@ -32,6 +32,8 @@
 \RequirePackage{siunitx}
 \RequirePackage{makeidx}
 \RequirePackage{natbib}
+\RequirePackage{etoolbox}
+\RequirePackage{xstring}
 
 \DeclareOption*{\PassOptionsToClass{\CurrentOption}{article}}
 \ProcessOptions\relax
@@ -100,7 +102,60 @@
 % For \ifx to check for true value
 \global\def\glitterTrue{true}
 
-\global\def\glitterLabelBase{glitter:}
+\global\def\glitterLabelBase{glitter-}
+
+\ExplSyntaxOn
+
+\NewDocumentCommand{\listappend}{mm}
+ {% #1 = list name, #2 = items
+    \clist_if_exist:cTF { g_yannisl_list_#1_clist } 
+    { } 
+    {\clist_gclear_new:c { g_yannisl_list_#1_clist }}
+    \clist_gput_right:cn { g_yannisl_list_#1_clist } { #2 }%
+    \clist_gremove_duplicates:c { g_yannisl_list_#1_clist }%
+ }
+
+\NewDocumentCommand{\xlabel}{m}
+{
+    \listappend{#1}{\thepage}
+    \makeatletter
+    \protected@write\@auxout{}{
+        \noexpand\SiteRef{siteref@#1}{,,\clist_use:cn { g_yannisl_list_#1_clist} {,}}
+    }
+    \makeatother
+}
+
+\ExplSyntaxOff
+
+\makeatletter
+
+\newrobustcmd*\SiteRef[2]{\csgdef{#1}{#2}}
+
+\newrobustcmd*\xref[1]{
+\ifcsundef{siteref@#1}{%
+     %\@latex@warning@no@line{Label `#1' not defined}
+     }{%
+    \begingroup
+      $\in$
+      \StrGobbleLeft{\csuse{siteref@#1}}{2}[\@tempa]\relax%
+      \def\@tempb{}%
+      \@tempcnta=0\relax%
+      \@tempcntb=\@ne\relax%
+      \def\do##1{\advance\@tempcnta\@ne}%
+      \expandafter\docsvlist\expandafter{\@tempa}%
+       \def\do##1{%
+         \ifnum\@tempcntb=\@tempcnta\relax%
+            \hyperpage{##1}%
+         \else
+            \hyperpage{##1},%
+          \fi%
+          \advance\@tempcntb\@ne
+       }%
+       \expandafter\docsvlist\expandafter{\@tempa}\xspace%
+    \endgroup
+   }%
+}
+\makeatother
 
 % Variables that affect typesetting certain blocks.
 \global\def\glitterAppendSymbol{}
@@ -130,24 +185,26 @@
 \newcommand\glitterEndText{\par}
 
 \newcommand\glitterCodeRef[2]{%
-    \ifempty{#1}\def\pp{}\else\def\pp{ \pageref{\glitterLabelBase#1:0}}\fi%
+    \ifempty{#1}\def\pp{}\else\def\pp{\ \pageref{\glitterLabelBase#1-0}\xlabel{\glitterLabelBase#1-0}}\fi%
     \ensuremath{%
     \langle\kern-2pt\langle%
     \textrm{#2\tiny\pp}%
     \rangle\kern-2pt\rangle}}
 
-\newcommand\glitterStartCode[1]{\refstepcounter{block}\label{\glitterLabelBase\glitterBlockId:\glitterBlockSeries}%
+\newcommand\glitterStartCode[1]{\refstepcounter{block}\label{\glitterLabelBase\glitterBlockId-\glitterBlockSeries}% 
     \par\noindent\hbox{$\glitterCodeRef{}{#1}\glitterAppendSymbol\equiv$}\hfill%
+    {\small\xref{\glitterLabelBase\glitterBlockId -\glitterBlockSeries}}%
     \ifnum\glitterBlockSeries>0{%
         \def\glitterPrev{\the\numexpr\glitterBlockSeries - 1}%
-        $\vartriangle${\small\pageref{\glitterLabelBase\glitterBlockId:\glitterPrev}}}\fi%
+        $\vartriangle${\small\pageref{\glitterLabelBase\glitterBlockId-\glitterPrev}}}\fi%
     \def\glitterNext{\the\numexpr\glitterBlockSeries + 1}%
-    \iflabelexists{\glitterLabelBase\glitterBlockId:\glitterNext}{%
-        $\triangledown${\small\pageref{\glitterLabelBase\glitterBlockId:\glitterNext}}%
+    \iflabelexists{\glitterLabelBase\glitterBlockId -\glitterNext}{%
+        $\triangledown${\small\pageref{\glitterLabelBase\glitterBlockId-\glitterNext}}%
     }%
     \ifx\glitterTrue\glitterBlockTable\addcontentsline{blk}{block}{\protect#1}\fi}
 
 \newcommand\glitterEndCode{\glitterSet{append={},blocktable=false,blockid=0,blockseries=1}}
+
 \newcommand\glitterHash{\texttt{\char64}}
 
 \makeindex
