@@ -104,8 +104,12 @@
 
 \global\def\glitterLabelBase{glitter-}
 
+%%%%%%%%
+%% Handling code block cross-references:
+%%
 \ExplSyntaxOn
 
+% add an item to a list
 \NewDocumentCommand{\listappend}{mm}
  {% #1 = list name, #2 = items
     \clist_if_exist:cTF { g_yannisl_list_#1_clist } 
@@ -115,47 +119,36 @@
     \clist_gremove_duplicates:c { g_yannisl_list_#1_clist }%
  }
 
-\NewDocumentCommand{\xlabel}{m}
-{
-    \listappend{#1}{\thepage}
-    \makeatletter
-    \protected@write\@auxout{}{
-        \noexpand\SiteRef{siteref@#1}{,,\clist_use:cn { g_yannisl_list_#1_clist} {,}}
-    }
-    \makeatother
+ % mark a reference
+\NewDocumentCommand{\xlabel}{m}%
+{%
+    \listappend{#1}{\thepage}%
+    \makeatletter%
+    \protected@write\@auxout{}{%
+        \string\SiteRef{#1}{\clist_use:cn { g_yannisl_list_#1_clist} {,}}%
+    }%
+    \makeatother%
+}
+
+% print the cross references.
+\NewDocumentCommand{\xref}{m}%
+{%
+    \clist_if_exist:cTF { g_yannisl_listprev_#1_clist }%
+    {%
+        $\in$%
+        \gdef\comma{}%
+        \clist_map_inline:cn { g_yannis1_listprev_#1_clist } {\comma\pageref{#1}\gdef\comma{,}}%
+    }%
+    {}%
+}
+
+% set the complete cross references
+\NewDocumentCommand{\SiteRef}{mm}{%
+    \clist_gclear_new:c {g_yannisl_listprev_#1_clist}%
+    \clist_gset:cn {g_yannisl_list_#1prev_clist} {#2}%
 }
 
 \ExplSyntaxOff
-
-\makeatletter
-
-\newrobustcmd*\SiteRef[2]{\csgdef{#1}{#2}}
-
-\newrobustcmd*\xref[1]{
-\ifcsundef{siteref@#1}{%
-     %\@latex@warning@no@line{Label `#1' not defined}
-     }{%
-    \begingroup
-      $\in$
-      \StrGobbleLeft{\csuse{siteref@#1}}{2}[\@tempa]\relax%
-      \def\@tempb{}%
-      \@tempcnta=0\relax%
-      \@tempcntb=\@ne\relax%
-      \def\do##1{\advance\@tempcnta\@ne}%
-      \expandafter\docsvlist\expandafter{\@tempa}%
-       \def\do##1{%
-         \ifnum\@tempcntb=\@tempcnta\relax%
-            \hyperpage{##1}%
-         \else
-            \hyperpage{##1},%
-          \fi%
-          \advance\@tempcntb\@ne
-       }%
-       \expandafter\docsvlist\expandafter{\@tempa}\xspace%
-    \endgroup
-   }%
-}
-\makeatother
 
 % Variables that affect typesetting certain blocks.
 \global\def\glitterAppendSymbol{}
@@ -193,12 +186,12 @@
 
 \newcommand\glitterStartCode[1]{\refstepcounter{block}\label{\glitterLabelBase\glitterBlockId-\glitterBlockSeries}% 
     \par\noindent\hbox{$\glitterCodeRef{}{#1}\glitterAppendSymbol\equiv$}\hfill%
-    {\small\xref{\glitterLabelBase\glitterBlockId -\glitterBlockSeries}}%
+    {\small\xref{\glitterLabelBase\glitterBlockId-\glitterBlockSeries}}%
     \ifnum\glitterBlockSeries>0{%
         \def\glitterPrev{\the\numexpr\glitterBlockSeries - 1}%
         $\vartriangle${\small\pageref{\glitterLabelBase\glitterBlockId-\glitterPrev}}}\fi%
     \def\glitterNext{\the\numexpr\glitterBlockSeries + 1}%
-    \iflabelexists{\glitterLabelBase\glitterBlockId -\glitterNext}{%
+    \iflabelexists{\glitterLabelBase\glitterBlockId-\glitterNext}{%
         $\triangledown${\small\pageref{\glitterLabelBase\glitterBlockId-\glitterNext}}%
     }%
     \ifx\glitterTrue\glitterBlockTable\addcontentsline{blk}{block}{\protect#1}\fi}

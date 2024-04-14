@@ -285,8 +285,7 @@ This is a work in progress. Commits may not compile, and currently it is just ba
 
 Things to do:
 
-1. For code defs, add list of pages where they are used?
-2. Unit tests
+1. Unit tests
 
 ### Known limitations
 
