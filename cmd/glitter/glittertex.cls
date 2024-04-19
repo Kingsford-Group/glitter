@@ -41,6 +41,14 @@
 \urlstyle{rm}
 \renewcommand{\ttdefault}{pcr}
 
+\usetikzlibrary{
+    positioning, 
+    matrix, 
+    chains,
+    calc,
+    arrows.meta,
+}
+
 \lstset{%
     language=Go,%
     basicstyle=\ttfamily\footnotesize,%
@@ -109,7 +117,7 @@
 %%
 \ExplSyntaxOn
 
-% add an item to a list
+% add an item to a list. creates the list if it does not exist.
 \NewDocumentCommand{\listappend}{mm}
  {% #1 = list name, #2 = items
     \clist_if_exist:cTF { g_yannisl_list_#1_clist } 
@@ -119,7 +127,7 @@
     \clist_gremove_duplicates:c { g_yannisl_list_#1_clist }%
  }
 
- % mark a reference
+ % mark a reference. should be called anytime a code block is referenced.
 \NewDocumentCommand{\xlabel}{m}%
 {%
     \listappend{#1}{\thepage}%
@@ -130,7 +138,7 @@
     \makeatother%
 }
 
-% print the cross references.
+% print the cross references. Called from the code tha prints a code blcok.
 \NewDocumentCommand{\xref}{m}%
 {%
     \clist_if_exist:cTF { g_yannisl_listprev_#1_clist }%
@@ -203,4 +211,3 @@
 \makeindex
 
 % end
-

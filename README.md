@@ -286,6 +286,8 @@ This is a work in progress. Commits may not compile, and currently it is just ba
 Things to do:
 
 1. Unit tests
+2. Rethink escape approach, which doesn’t really work.
+3. 
 
 ### Known limitations
 
