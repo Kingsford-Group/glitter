@@ -62,6 +62,7 @@
     numberstyle=\tiny,
     tabsize=4,
     emptylines=2,
+    mathescape=false,
 }
 
 \widowpenalty=0
@@ -86,9 +87,8 @@
 %%glitter CodeCodeRef   @\glitterCodeRef{$blockid}{${name}}@
 %%glitter TextCodeRef   \glitterCodeRef{$blockid}{${name}}
 %%glitter EscapeSub     {\glitterHash}
-%%glitter InlineCode    \lstinline\#$1#
-%%glitter AppendSymbol  \,+\kern-2pt
-%%glitter CodeSet       \glitterSet{append={$append},blocktable=$blocktable,blockid=$blockid,blockseries=$blockseries}
+%%glitter InlineCode    \lstinline\##$1##
+%%glitter CodeSet       \glitterSet{blocktable=$blocktable,blockid=$blockid,blockseries=$blockseries}
 %%glitter WeaveLineRef  %%line "$filename":$lineno$n
 %%glitter TangleLineRef /*line $filename:$lineno*/
 
@@ -159,14 +159,13 @@
 \ExplSyntaxOff
 
 % Variables that affect typesetting certain blocks.
-\global\def\glitterAppendSymbol{}
+\global\def\glitterAppendSymbol{\,+\kern-2pt}
 \global\def\glitterBlockTable{false}
 \global\def\glitterBlockId{0}
-\global\def\glitterBlockSeries{1}
+\global\def\glitterBlockSeries{0}
 
 % "Functions" called by the keyval package from \glitterSet. 
 \makeatletter
-\define@key{glitterkeys}{append}{\global\def\glitterAppendSymbol{#1}}
 \define@key{glitterkeys}{blocktable}{\global\def\glitterBlockTable{#1}}
 \define@key{glitterkeys}{blockid}{\global\def\glitterBlockId{#1}}
 \define@key{glitterkeys}{blockseries}{\global\def\glitterBlockSeries{#1}}
@@ -193,7 +192,7 @@
     \rangle\kern-2pt\rangle}}
 
 \newcommand\glitterStartCode[1]{\refstepcounter{block}\label{\glitterLabelBase\glitterBlockId-\glitterBlockSeries}% 
-    \par\noindent\hbox{$\glitterCodeRef{}{#1}\glitterAppendSymbol\equiv$}\hfill%
+    \par\noindent\hbox{$\glitterCodeRef{}{#1}\ifnum\glitterBlockSeries>0{\glitterAppendSymbol}\fi\equiv$}\hfill%
     {\small\xref{\glitterLabelBase\glitterBlockId-\glitterBlockSeries}}%
     \ifnum\glitterBlockSeries>0{%
         \def\glitterPrev{\the\numexpr\glitterBlockSeries - 1}%
@@ -204,7 +203,7 @@
     }%
     \ifx\glitterTrue\glitterBlockTable\addcontentsline{blk}{block}{\protect#1}\fi}
 
-\newcommand\glitterEndCode{\glitterSet{append={},blocktable=false,blockid=0,blockseries=1}}
+\newcommand\glitterEndCode{\glitterSet{blocktable=false,blockid=0,blockseries=0}}
 
 \newcommand\glitterHash{\texttt{\char64}}
 

@@ -67,12 +67,10 @@ func NewGlitterOptions() GlitterOptions {
 			"StartCode":     `\glitterStartCode{$1}$n\begin{lstlisting}`,
 			"EndCode":       `\end{lstlisting}\glitterEndCode$n`,
 			"CodeEscape":    `@`,
-			"CodeCodeRef":   `@\glitterCodeRef{$1}@`,
-			"TextCodeRef":   `\glitterCodeRef{$1}`,
+			"CodeRef":       `\glitterCodeRef{$1}`,
 			"EscapeSub":     `{\glitterHash}`,
 			"InlineCode":    `\lstinline@$1@`,
-			"AppendSymbol":  `\,+\kern-2pt`,
-			"CodeSet":       `\glitterSet{append={$append},blocktable=$blocktable,blockid=$blockid,blockseries=$blockseries}`,
+			"CodeSet":       `\glitterSet{blocktable=$blocktable,blockid=$blockid,blockseries=$blockseries}`,
 			"WeaveLineRef":  `%%line $lineno "$filename"$n`,
 			"TangleLineRef": `/*line $filename:$lineno*/`,
 			"Shell":         shell,
@@ -193,7 +191,7 @@ var (
 	// lineMatchesWithArg.
 	textStartRegex = regexp.MustCompile(`^\s*@(:+)`)
 	codeStartRegex = regexp.MustCompile(`^\s*<<(.+)>>=\s*$`)
-	escapeRegex    = regexp.MustCompile(`@'(.)`)
+	escapeRegex    = regexp.MustCompile(`#+`)
 	spaceRegexp    = regexp.MustCompile(`\s+`)
 	topLevelRegex  = regexp.MustCompile(`^\*\s*(".*")?\s*(\d+)?\s*$`)
 	topLevelStart  = regexp.MustCompile(`^\s*\*`)
@@ -444,7 +442,7 @@ func weaveCodeRefs(line string, state, callingBlockId int, blocks map[string]Wea
 	// latex command with # #, and replace any real # characters with the
 	// #\glitterHash# macro, which is defined to be \texttt{\char35}.
 
-    replacement := Options.GetConfig("TextCodeRef")
+    replacement := Options.GetConfig("CodeRef")
 	if state == InCode {
 		// first replace all the @ inside of << >> code references with EscapeSub
 		line = escapeCodeEscapes(line)
@@ -454,7 +452,7 @@ func weaveCodeRefs(line string, state, callingBlockId int, blocks map[string]Wea
 			esc,
 			esc+Options.GetConfig("EscapeSub")+esc,
 		)
-        replacement = Options.GetConfig("CodeCodeRef")
+        replacement = esc + replacement + esc
 	}
 
     return codeRefRegex.ReplaceAllStringFunc(line, func(n string) string {
@@ -509,9 +507,15 @@ func weaveInlineCode(line string) string {
     return inlineCodeRegex.ReplaceAllString(line, Options.GetConfig("InlineCode"))
 }
 
-// replaceEscapes substitutes the escape sequence @'x with x.
-func replaceEscapes(line string) string {
-	return escapeRegex.ReplaceAllString(line, "$1")
+// replaceNoOpChars substitutes runs of the no op character with one fewer
+// character. So "#" is deleted, but "##" becomes "#" and "###" becomes "##".
+func replaceNoOpChars(line string) string {
+    return escapeRegex.ReplaceAllStringFunc(line, func(s string) string {
+        if len(s) == 0 {
+            return s
+        }
+        return s[1:]
+    })
 }
 
 // lineCommand returns the appropriate string to mark a line number pragma.
@@ -544,7 +548,6 @@ func writeCodeBlockOptions(
 
 	blockName = canonicalCodeName(blockName)
 
-	appendSymbol := ""
 	// Every code block is given a number in increasing (but not necessarily
 	// consequtive) order. Blocks with the same name are given the same number.
 	labelNum := 0
@@ -558,9 +561,6 @@ func writeCodeBlockOptions(
 	// if we have already seen this block, get the number, and increment
 	// the count.
 	if info, ok := seen[blockName]; ok {
-        if info.count > 0 {
-            appendSymbol = Options.GetConfig("AppendSymbol")
-        }
 		info.count++
 		seen[blockName] = info
 		labelNum = info.firstBlockNum
@@ -573,8 +573,6 @@ func writeCodeBlockOptions(
 	setcmd := os.Expand(Options.GetConfig("CodeSet"),
 		func(s string) string {
 			switch s {
-			case "append":
-				return appendSymbol
 			case "blocktable":
 				return importantStr
 			case "blockid":
@@ -655,7 +653,7 @@ func Weave(filenames []string, out io.Writer) error {
     // processWeaveLine makes a text line to be ready to output.
     processWeaveLine := func (line string, pos FilePos) string {
         registerBlockRefs(seenBlocks, &blockId, line, pos)
-        return replaceEscapes(weaveInlineCode(weaveCodeRefs(line, state, currentBlockId, seenBlocks)))
+        return replaceNoOpChars(weaveInlineCode(weaveCodeRefs(line, state, currentBlockId, seenBlocks)))
     }
 
 	// for every source line
@@ -739,7 +737,7 @@ func Weave(filenames []string, out io.Writer) error {
 			// if we're in the start state, we send lines out with minimal
 			// processing.
 			if state == Start {
-                err = writeStrings(w, replaceEscapes(l.Line()), "\n")
+                err = writeStrings(w, replaceNoOpChars(l.Line()), "\n")
                 if err != nil {
                     return err
                 }
@@ -796,7 +794,7 @@ func canonicalCodeName(name string) string {
 	if !isTopLevelName(name) {
 		name = strings.ToLower(name)
 	}
-	return replaceEscapes(name)
+	return replaceNoOpChars(name)
 }
 
 // isTopLevelName returns true if this is a top-level ref, meaning that the code name
@@ -1131,7 +1129,7 @@ func expandAndWriteBlock(b Block, blocks map[string]Block, out *bufio.Writer) er
 			return err
 		}
 		for e := newLine.Front(); e != nil; e = e.Next() {
-            writeStrings(out, replaceEscapes(e.Value.(string)), "\n")
+            writeStrings(out, replaceNoOpChars(e.Value.(string)), "\n")
 		}
 	}
 	return nil
