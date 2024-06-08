@@ -465,6 +465,8 @@ func weaveCodeRefs(line string, state, callingBlockId int, blocks map[string]Wea
                 blocks[nn].referencedFrom[callingBlockId] = Void{}
             }
         }
+        // TODO: merge all these uses of os.Expand into a single function that
+        // takes a map of replacements?
         return os.Expand(replacement, func(s string) string {
             switch s {
             case "blockid":
@@ -1348,6 +1350,9 @@ func ExecuteCommand(cmd string) error {
 		return err
 	}
 	Info(1, "Running `%s`...", cmd)
+    // TODO: capture the output and write the last few lines to the termainl and
+    // create a log file that contains the whole output.
+
 	// if $SHELL was given as in the command string, run it directly.
 	if explicitShell {
 		args := strings.Fields(cmd)

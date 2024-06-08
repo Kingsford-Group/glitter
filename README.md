@@ -73,9 +73,9 @@ Lines between `@glitter hide` … `@glitter show` are not included in the typese
 
 ## Escapes
 
-Anyplace, a sequence `@'x` is treated as a single occurrence of `x` but only *after* the special patterns are interpreted. For example, `@'@` is a single `@` and `@'<` is a single `<`. Occurrences of `@` and `<` that can’t be interpreted as one of the forms above do not need to be escaped. Substitution of escapes is applied as late as possible in the processing. 
+A sequence of $n$ `#` characters is replaced by $n-1$ `#` characters. This is done at the last possible moment, and in particular after all the other special sequences have been interpreted. This means that the `#` character can be used to “break up” a pattern that would otherwise match some glitter syntax. For example, `<#< x and >> y` won’t be recognized as a code reference.
 
-Note that this rule doesn’t make characters inactive. So in ``<<foo @'>> moose >>`` the first `>>` is still used as the endpoint of the reference, and this defines a reference to `foo @\'` since the first `>>` still exists in the file. To include, a literal `>>`, one would say `>@'>`, since that causes `>>` to not be present.
+Note that if you define a LaTeX command with `#1`, `#2` parameter references, you must double the `#` character. 
 
 ## Includes
 
@@ -102,14 +102,14 @@ This writes the configuration to a options file.
 
 ## Summary of syntax:
 
-* `@:` as the first non-whitespace on a line starts a text block
+* `@:` as the first non-whitespace on a line starts a text block. The `:` may be repeated any number of times, and if it occurs more than once, the next code block is marked as a key block.
 * `<<code block name>>=` on a line of its own starts a code block.
 * `<<* “file” 10>>=` on a line of its own starts a top-level block that will be written to “file”; blocks written to that file will be sorted by the number given in the 3rd position (e.g. 10). The `“file”` and/or the number may be omitted, in which case defaults will be used.
-* `@include "file"` is (recursively) replaced by the contents of “file”.
-* `@glitter top` as the first non-blank line in a file does two things: (1) marks the file for inclusion when a directory is given to tangle; and (2) sets the default output filename to a modification of the current glitter filename (`.gw` → `.go`). This command is scoped to the file and its include subtree.
+* `@include "file"` is (recursively) replaced by the contents of `file`.
+* `@glitter top` as the first non-blank line in a file does two things: (1) marks the file for inclusion when a directory is given to tangle; and (2) sets the default output filename to a modification of the current glitter filename (`.gw` → `.go`). This command is scoped to the file and its include subtree. `@glitter top` anyplace in the file only does (2).
 * Lines between `@glitter hide` and `@glitter show` are not output to the weaved file. Includes between these lines are skipped. They mean: when weaving, totally ignore everything between them.
-* `@'x` means: at the last possible moment, just before writing to a file, replace with `x`, where `x` can be any character.
-* `<<code block name>>` inside of a code block is (recursively) substituted with the content of the named code block during tangle. Inside a text block, it is typeset specially.
+* `####`…. is replaced by 1 fewer `#` symbol after all other transformations are recognized.
+* `<<code block name>>` inside of a code block is (recursively) substituted with the content of the named code block during tangle. When weaving, it is typeset specially.
 * `[[ … ]]` inside of a text block is typeset as code. There cannot be a `@` (escaped or otherwise) between the `[[ ]]`.
 
 ## Command line usage
@@ -136,9 +136,13 @@ Whitespace at the start of each line in a code block is removed in such a way to
 
 Comments of the form `%line N “file”` are included whenever the file switches.
 
-Any lines before the first block encountered in a run are output between the command that starts the file (`Start` below) and the command that starts the content (`StartBook` below), only replacing `@‘` escapes. This means that lines before the first block encountered are added to the LaTeX preamble (assuming you are using LaTeX).
+Any lines before the first block encountered in a run are output between the command that starts the file (`Start` below) and the command that starts the content (`StartBook` below), only replacing `#` escapes. This means that lines before the first block encountered are added to the LaTeX preamble (assuming you are using LaTeX).
 
-If a block is being appended to an already defined block, it is preceded by a `+≡` symbol.
+If a block is being appended to an already defined block, it is preceded by a `+≡` symbol. In the default LaTeX format, various macros are used to print cross-references between sections at the right end of the first line of a code block:
+
+​	<<Code block name>>+≡     ▴page ▾page ∈page
+
+where ▴ ▾ link to the page where the code block is also defined (previous definitions and subsequent definitions). ∈ gives a list of places where the code block is referenced.
 
 Unless you give the `-dont-build` option, the output of weave will be run through `pdflatex` (or whatever command is given by the `WeaveCommand` configuration option).
 
@@ -158,7 +162,7 @@ If a file is given explicitly, then it is always added to the list of files that
 
 The list is sorted lexicographically, and duplicate files are removed. The files are then processed in order. Let $F_1,F_2,\dots,F_k$ be the files.
 
-When processing $F_i$ *and all the files included from it* (unless they start with `@glitter top`), the default output file is $F_i$​ with its `.gw` extension replaced by `.go`. (If the filename does not end with `.gw` then the `.go` extension is appended to the filename.)
+When processing $F_i$ *and all the files included from it* (unless they start with `@glitter top`), the default output file is $F_i$​ with its `.gw` extension replaced by `.go`. (If the filename does not end with `.gw` then the `.go` extension is appended to the filename.) If an included file starts with `@glitter top`, then the output filename is set to the include’s filename, with `.gw` replaced by `.go`.
 
 If you want to tangle only given files, you can list them on the command line. Such explicitly listed files do not need to start with `@glitter top` to be processed (but they can).
 
@@ -286,8 +290,9 @@ This is a work in progress. Commits may not compile, and currently it is just ba
 Things to do:
 
 1. Unit tests
-2. Rethink escape approach, which doesn’t really work.
-3. 
+2. Improve documentations
+3. Rationalize the code for variable substituion in configuration options (currently it’s spread around where the option is used — would be better to be central).
+4. Provide more info and logs for error on running the `WeaveCommand` and `TangleCommand`. 
 
 ### Known limitations
 
@@ -301,8 +306,8 @@ Things to do:
    2. conversion of text blocks to documentation comments, or `doc.go` files?
 2. Support for partial code references a la CWEB `<<A long block name is…>>` [May add too much uncertainty and room for errors.]
 3. Performance enhancements? For example, memoizing the substituted blocks (rather than re-expanding on every use)
-4. Indexing, primarily the ability to index terms appearing in code blocks. Perhaps use `@` to label a word for indexing? Or figure out a way to use go ast to find terms.
+4. Automatic indexing, primarily the ability to index terms appearing in code blocks. Perhaps use `@` to label a word for indexing? Or figure out a way to use go ast to find terms.
 
-<<Code block name>>+≡     ▴page ▾page
+
 
 \label{glXXX:n}
